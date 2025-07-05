@@ -1,4 +1,7 @@
-use std::ffi::{CStr, c_char, c_int};
+use std::{
+    ffi::{CStr, c_char, c_int},
+    mem::MaybeUninit,
+};
 
 use libc;
 
@@ -50,4 +53,19 @@ pub extern "C" fn setblocking(fd: c_int, state: c_int) {
         mode &= !libc::O_NONBLOCK;
     }
     unsafe { libc::fcntl(fd, libc::F_SETFL, mode) };
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn get_timer() -> u64 {
+    let mut ts = MaybeUninit::uninit();
+    let ts = unsafe {
+        // We want a timestamp in milliseconds suitable for time measurement,
+        // so prefer the monotonic clock.
+        if libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr()) != 0 {
+            libc::clock_gettime(libc::CLOCK_REALTIME, ts.as_mut_ptr());
+        }
+        ts.assume_init()
+    };
+
+    ts.tv_sec as u64 * 1000 + ts.tv_nsec as u64 / 1_000_000
 }
