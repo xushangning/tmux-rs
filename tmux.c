@@ -267,19 +267,19 @@ shell_argv0(const char *shell, int is_login)
 // 	}
 // }
 
-uint64_t
-get_timer(void)
-{
-	struct timespec	ts;
-
-	/*
-	 * We want a timestamp in milliseconds suitable for time measurement,
-	 * so prefer the monotonic clock.
-	 */
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
-		clock_gettime(CLOCK_REALTIME, &ts);
-	return ((ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL));
-}
+// uint64_t
+// get_timer(void)
+// {
+// 	struct timespec	ts;
+//
+// 	/*
+// 	 * We want a timestamp in milliseconds suitable for time measurement,
+// 	 * so prefer the monotonic clock.
+// 	 */
+// 	if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+// 		clock_gettime(CLOCK_REALTIME, &ts);
+// 	return ((ts.tv_sec * 1000ULL) + (ts.tv_nsec / 1000000ULL));
+// }
 
 const char *
 sig2name(int signo)
