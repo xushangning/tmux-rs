@@ -15,8 +15,15 @@ AM_CPPFLAGS += @XOPEN_DEFINES@ \
 	-DTMUX_LOCK_CMD='"@DEFAULT_LOCK_CMD@"' \
 	-DTMUX_TERM='"@DEFAULT_TERM@"'
 
+EXTRA_tmux_DEPENDENCIES = rust
+
+rust:
+	cargo build
+
+.PHONY: rust
+
 # Additional object files.
-LDADD = $(LIBOBJS)
+LDADD = $(LIBOBJS) target/debug/libtmux_rs.a
 
 # Set flags for gcc.
 if IS_GCC
