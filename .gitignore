@@ -22,3 +22,8 @@ fuzz/*-fuzzer
 tags
 tmux
 tmux.1.*
+
+
+# Added by cargo
+
+/target

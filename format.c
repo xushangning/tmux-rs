@@ -4017,29 +4017,29 @@ format_strip(const char *s)
 }
 
 /* Skip until end. */
-const char *
-format_skip(const char *s, const char *end)
-{
-	int	brackets = 0;
-
-	for (; *s != '\0'; s++) {
-		if (*s == '#' && s[1] == '{')
-			brackets++;
-		if (*s == '#' &&
-		    s[1] != '\0' &&
-		    strchr(",#{}:", s[1]) != NULL) {
-			s++;
-			continue;
-		}
-		if (*s == '}')
-			brackets--;
-		if (strchr(end, *s) != NULL && brackets == 0)
-			break;
-	}
-	if (*s == '\0')
-		return (NULL);
-	return (s);
-}
+// const char *
+// format_skip(const char *s, const char *end)
+// {
+// 	int	brackets = 0;
+//
+// 	for (; *s != '\0'; s++) {
+// 		if (*s == '#' && s[1] == '{')
+// 			brackets++;
+// 		if (*s == '#' &&
+// 		    s[1] != '\0' &&
+// 		    strchr(",#{}:", s[1]) != NULL) {
+// 			s++;
+// 			continue;
+// 		}
+// 		if (*s == '}')
+// 			brackets--;
+// 		if (strchr(end, *s) != NULL && brackets == 0)
+// 			break;
+// 	}
+// 	if (*s == '\0')
+// 		return (NULL);
+// 	return (s);
+// }
 
 /* Return left and right alternatives separated by commas. */
 static int
