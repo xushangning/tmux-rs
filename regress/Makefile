@@ -1,4 +1,4 @@
-TESTS!= echo *.sh
+TESTS := $(wildcard *.sh)
 
 .PHONY: all $(TESTS)
 .NOTPARALLEL: all $(TESTS)
