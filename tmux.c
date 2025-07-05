@@ -46,7 +46,7 @@ const char	*shell_command;
 static __dead void	 usage(int);
 static char		*make_label(const char *, char **);
 
-static int		 areshell(const char *);
+// static int		 areshell(const char *);
 static const char	*getshell(void);
 
 static __dead void
@@ -76,34 +76,34 @@ getshell(void)
 	return (_PATH_BSHELL);
 }
 
-int
-checkshell(const char *shell)
-{
-	if (shell == NULL || *shell != '/')
-		return (0);
-	if (areshell(shell))
-		return (0);
-	if (access(shell, X_OK) != 0)
-		return (0);
-	return (1);
-}
-
-static int
-areshell(const char *shell)
-{
-	const char	*progname, *ptr;
-
-	if ((ptr = strrchr(shell, '/')) != NULL)
-		ptr++;
-	else
-		ptr = shell;
-	progname = getprogname();
-	if (*progname == '-')
-		progname++;
-	if (strcmp(ptr, progname) == 0)
-		return (1);
-	return (0);
-}
+// int
+// checkshell(const char *shell)
+// {
+// 	if (shell == NULL || *shell != '/')
+// 		return (0);
+// 	if (areshell(shell))
+// 		return (0);
+// 	if (access(shell, X_OK) != 0)
+// 		return (0);
+// 	return (1);
+// }
+//
+// static int
+// areshell(const char *shell)
+// {
+// 	const char	*progname, *ptr;
+//
+// 	if ((ptr = strrchr(shell, '/')) != NULL)
+// 		ptr++;
+// 	else
+// 		ptr = shell;
+// 	progname = getprogname();
+// 	if (*progname == '-')
+// 		progname++;
+// 	if (strcmp(ptr, progname) == 0)
+// 		return (1);
+// 	return (0);
+// }
 
 static char *
 expand_path(const char *path, const char *home)

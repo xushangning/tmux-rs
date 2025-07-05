@@ -1,5 +1,8 @@
 use std::ffi::{CStr, c_char};
 
+mod compat;
+mod tmux;
+
 /// Skip until end.
 pub fn format_skip_rust(bs: &[u8], end: &[u8]) -> Option<usize> {
     let mut brackets = 0;
