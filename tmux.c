@@ -253,19 +253,19 @@ shell_argv0(const char *shell, int is_login)
 	return (argv0);
 }
 
-void
-setblocking(int fd, int state)
-{
-	int mode;
-
-	if ((mode = fcntl(fd, F_GETFL)) != -1) {
-		if (!state)
-			mode |= O_NONBLOCK;
-		else
-			mode &= ~O_NONBLOCK;
-		fcntl(fd, F_SETFL, mode);
-	}
-}
+// void
+// setblocking(int fd, int state)
+// {
+// 	int mode;
+//
+// 	if ((mode = fcntl(fd, F_GETFL)) != -1) {
+// 		if (!state)
+// 			mode |= O_NONBLOCK;
+// 		else
+// 			mode &= ~O_NONBLOCK;
+// 		fcntl(fd, F_SETFL, mode);
+// 	}
+// }
 
 uint64_t
 get_timer(void)
