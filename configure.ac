@@ -52,6 +52,10 @@ AC_PROG_YACC
 PKG_PROG_PKG_CONFIG
 AC_USE_SYSTEM_EXTENSIONS
 
+AC_CONFIG_MACRO_DIRS([m4])
+AM_PROG_AR
+LT_INIT
+
 # Default tmux.conf goes in /etc not ${prefix}/etc.
 test "$sysconfdir" = '${prefix}/etc' && sysconfdir=/etc
 

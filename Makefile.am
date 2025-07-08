@@ -1,12 +1,13 @@
+ACLOCAL_AMFLAGS = -I m4
+
 # Obvious program stuff.
-bin_PROGRAMS = tmux
+lib_LTLIBRARIES = libtmux.la
 CLEANFILES = tmux.1.mdoc tmux.1.man cmd-parse.c
 
 # Distribution tarball options.
 EXTRA_DIST = \
 	CHANGES README README.ja COPYING example_tmux.conf \
 	osdep-*.c mdoc2man.awk tmux.1
-dist_EXTRA_tmux_SOURCES = compat/*.[ch]
 
 # Preprocessor flags.
 AM_CPPFLAGS += @XOPEN_DEFINES@ \
@@ -15,15 +16,15 @@ AM_CPPFLAGS += @XOPEN_DEFINES@ \
 	-DTMUX_LOCK_CMD='"@DEFAULT_LOCK_CMD@"' \
 	-DTMUX_TERM='"@DEFAULT_TERM@"'
 
-EXTRA_tmux_DEPENDENCIES = rust
+EXTRA_libtmux_la_DEPENDENCIES = rust
 
 rust:
-	cargo build
+	cargo build --lib
 
 .PHONY: rust
 
 # Additional object files.
-LDADD = $(LIBOBJS) target/debug/libtmux_rs.a
+libtmux_la_LIBADD = $(LTLIBOBJS) target/debug/libtmux_rs.a
 
 # Set flags for gcc.
 if IS_GCC
@@ -79,7 +80,7 @@ AM_CPPFLAGS += -DTMUX_SOCK_PERM=0
 endif
 
 # List of sources.
-dist_tmux_SOURCES = \
+dist_libtmux_la_SOURCES = \
 	alerts.c \
 	arguments.c \
 	attributes.c \
@@ -212,32 +213,32 @@ dist_tmux_SOURCES = \
 	window.c \
 	xmalloc.c \
 	xmalloc.h
-nodist_tmux_SOURCES = osdep-@PLATFORM@.c
+nodist_libtmux_la_SOURCES = osdep-@PLATFORM@.c
 
 # Add compat file for forkpty.
 if NEED_FORKPTY
-nodist_tmux_SOURCES += compat/forkpty-@PLATFORM@.c
+nodist_libtmux_la_SOURCES += compat/forkpty-@PLATFORM@.c
 endif
 
 # Add compat file for systemd.
 if HAVE_SYSTEMD
-nodist_tmux_SOURCES += compat/systemd.c
+nodist_libtmux_la_SOURCES += compat/systemd.c
 endif
 
 # Add compat file for utf8proc.
 if HAVE_UTF8PROC
-nodist_tmux_SOURCES += compat/utf8proc.c
+nodist_libtmux_la_SOURCES += compat/utf8proc.c
 endif
 
 # Enable sixel support.
 if ENABLE_SIXEL
-dist_tmux_SOURCES += image.c image-sixel.c
+dist_libtmux_la_SOURCES += image.c image-sixel.c
 endif
 
 if NEED_FUZZING
 check_PROGRAMS = fuzz/input-fuzzer
 fuzz_input_fuzzer_LDFLAGS = $(FUZZING_LIBS)
-fuzz_input_fuzzer_LDADD = $(LDADD) $(tmux_OBJECTS)
+fuzz_input_fuzzer_LDADD = $(LDADD) $(libtmux_la_OBJECTS)
 endif
 
 # Install tmux.1 in the right format.
