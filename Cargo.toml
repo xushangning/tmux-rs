@@ -8,4 +8,5 @@ path = "src/lib.rs"
 crate-type = ["lib", "staticlib"]
 
 [dependencies]
+clap = { version = "4.5.40", features = ["derive"] }
 libc = "0.2.174"
