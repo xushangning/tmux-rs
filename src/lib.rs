@@ -1,7 +1,58 @@
-use std::ffi::{CStr, c_char};
+use core::ffi::{CStr, c_char, c_int, c_longlong, c_uint};
+
+use bitflags::bitflags;
 
 mod compat;
+mod options;
 mod tmux;
+
+pub use options::{Options, OptionsEntry};
+
+/// Option table entries.
+#[repr(C)]
+pub enum OptionsTableType {
+    String,
+    Number,
+    Key,
+    Colour,
+    Flag,
+    Choice,
+    Command,
+}
+
+bitflags! {
+    #[repr(C)]
+    pub struct OptionsTableScope: c_int {
+        const NONE = 1;
+        const SERVER = 1 << 1;
+        const SESSION = 1 << 2;
+        const WINDOW = 1 << 3;
+        const PANE = 1 << 4;
+    }
+}
+
+#[repr(C)]
+pub struct OptionsTableEntry {
+    pub name: *const c_char,
+    alternative_name: *const c_char,
+    entry_type: OptionsTableType,
+    pub scope: OptionsTableScope,
+    flags: c_int,
+
+    minimum: c_uint,
+    maximum: c_uint,
+    choices: *const *const c_char,
+
+    default_str: *const c_char,
+    default_num: c_longlong,
+    default_arr: *const *const c_char,
+
+    separator: *const c_char,
+    pattern: *const c_char,
+
+    text: *const c_char,
+    unit: *const c_char,
+}
 
 /// Skip until end.
 pub fn format_skip_rust(bs: &[u8], end: &[u8]) -> Option<usize> {

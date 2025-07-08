@@ -2,9 +2,11 @@ use core::{
     ffi::{c_char, c_int},
     marker::{PhantomData, PhantomPinned},
 };
-use std::{env, ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf};
+use std::{env, ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf, ptr};
 
 use clap::Parser;
+
+use tmux_rs::{Options, OptionsEntry, OptionsTableEntry, OptionsTableScope};
 
 #[derive(Parser)]
 #[command(version)]
@@ -62,6 +64,18 @@ struct EventBase {
 unsafe extern "C" {
     static environ: *const *const c_char;
 
+    /// server options
+    static mut global_options: *mut Options;
+    /// session options
+    static mut global_s_options: *mut Options;
+    /// window options
+    static mut global_w_options: *mut Options;
+    fn options_create(parent: *mut Options) -> *mut Options;
+    fn options_default(oo: *mut Options, oe: *const OptionsTableEntry) -> *mut OptionsEntry;
+
+    // https://github.com/rust-lang/rust/issues/54450
+    static options_table: OptionsTableEntry;
+
     static mut global_environ: *mut Environ;
     fn environ_create() -> *mut Environ;
     fn environ_put(env: *mut Environ, var: *const c_char, flags: c_int);
@@ -97,6 +111,29 @@ fn main() {
     for _ in 0..cli.verbose {
         unsafe {
             log_add_level();
+        }
+    }
+
+    unsafe {
+        global_options = options_create(ptr::null_mut());
+        global_s_options = options_create(ptr::null_mut());
+        global_w_options = options_create(ptr::null_mut());
+        let mut oe_ptr = &options_table as *const OptionsTableEntry;
+        loop {
+            let oe = oe_ptr.as_ref().unwrap();
+            if oe.name.is_null() {
+                break;
+            }
+
+            if oe.scope.contains(OptionsTableScope::SERVER) {
+                options_default(global_options, oe_ptr);
+            } else if oe.scope.contains(OptionsTableScope::SESSION) {
+                options_default(global_s_options, oe_ptr);
+            } else if oe.scope.contains(OptionsTableScope::WINDOW) {
+                options_default(global_w_options, oe_ptr);
+            }
+
+            oe_ptr = oe_ptr.add(1);
         }
     }
 
