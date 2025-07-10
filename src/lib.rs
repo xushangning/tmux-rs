@@ -9,6 +9,13 @@ mod tmux;
 pub use options::{Options, OptionsEntry};
 pub use tmux::get_shell;
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub enum ModeKey {
+    Emacs,
+    Vi,
+}
+
 /// Option table entries.
 #[repr(C)]
 pub enum OptionsTableType {

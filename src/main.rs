@@ -1,12 +1,12 @@
 use core::{
-    ffi::{c_char, c_int},
+    ffi::{c_char, c_int, c_longlong},
     marker::{PhantomData, PhantomPinned},
 };
 use std::{env, ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf, ptr};
 
 use clap::Parser;
 
-use tmux_rs::{Options, OptionsEntry, OptionsTableEntry, OptionsTableScope};
+use tmux_rs::{ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope};
 
 #[derive(Parser)]
 #[command(version)]
@@ -78,6 +78,11 @@ unsafe extern "C" {
         append: c_int,
         fmt: *const c_char,
         ...
+    ) -> *mut OptionsEntry;
+    fn options_set_number(
+        oo: *mut Options,
+        name: *const c_char,
+        value: c_longlong,
     ) -> *mut OptionsEntry;
 
     // https://github.com/rust-lang/rust/issues/54450
@@ -155,6 +160,38 @@ fn main() {
                 c"%s".as_ptr(),
                 CString::new(shell.as_os_str().as_bytes()).unwrap().as_ptr(),
             );
+        }
+    }
+
+    // Override keys to vi if VISUAL or EDITOR are set.
+    if let Ok(s) = env::var("VISUAL").or(env::var("EDITOR")) {
+        unsafe {
+            options_set_string(
+                global_options,
+                c"editor".as_ptr(),
+                0,
+                c"%s".as_ptr(),
+                CString::new(s.as_bytes()).unwrap().as_ptr(),
+            );
+        }
+        let keys = if PathBuf::from(s)
+            .file_name()
+            .unwrap_or_default()
+            .to_str()
+            .unwrap_or_default()
+            .contains("vi")
+        {
+            ModeKey::Vi
+        } else {
+            ModeKey::Emacs
+        };
+        unsafe {
+            options_set_number(
+                global_s_options,
+                c"status-keys".as_ptr(),
+                keys as c_longlong,
+            );
+            options_set_number(global_w_options, c"mode-keys".as_ptr(), keys as c_longlong);
         }
     }
 
