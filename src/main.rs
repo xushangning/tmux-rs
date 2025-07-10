@@ -93,6 +93,8 @@ unsafe extern "C" {
     fn environ_put(env: *mut Environ, var: *const c_char, flags: c_int);
     fn environ_set(env: *mut Environ, name: *const c_char, flags: c_int, fmt: *const c_char, ...);
 
+    static mut ptm_fd: c_int;
+
     fn log_add_level();
 
     fn osdep_event_init() -> *mut EventBase;
@@ -123,6 +125,13 @@ fn main() {
     for _ in 0..cli.verbose {
         unsafe {
             log_add_level();
+        }
+    }
+
+    unsafe {
+        ptm_fd = tmux_rs::getptmfd();
+        if ptm_fd == -1 {
+            panic!("getptmfd");
         }
     }
 

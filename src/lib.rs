@@ -6,6 +6,7 @@ mod compat;
 mod options;
 mod tmux;
 
+pub use compat::getptmfd;
 pub use options::{Options, OptionsEntry};
 pub use tmux::get_shell;
 
