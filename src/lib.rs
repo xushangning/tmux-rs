@@ -7,6 +7,7 @@ mod options;
 mod tmux;
 
 pub use options::{Options, OptionsEntry};
+pub use tmux::get_shell;
 
 /// Option table entries.
 #[repr(C)]
@@ -23,11 +24,11 @@ pub enum OptionsTableType {
 bitflags! {
     #[repr(C)]
     pub struct OptionsTableScope: c_int {
-        const NONE = 1;
-        const SERVER = 1 << 1;
-        const SESSION = 1 << 2;
-        const WINDOW = 1 << 3;
-        const PANE = 1 << 4;
+        const NONE = 0;
+        const SERVER = 1;
+        const SESSION = 1 << 1;
+        const WINDOW = 1 << 2;
+        const PANE = 1 << 3;
     }
 }
 

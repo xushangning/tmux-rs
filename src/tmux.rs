@@ -1,42 +1,66 @@
+use core::ffi::{CStr, c_char, c_int};
 use std::{
-    ffi::{CStr, c_char, c_int},
+    env,
+    ffi::CString,
     mem::MaybeUninit,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
 };
 
 use libc;
 
 use crate::compat::getprogname;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn checkshell(shell: *const c_char) -> c_int {
-    if shell.is_null() {
-        return 0;
+pub fn get_shell() -> Option<PathBuf> {
+    let shell = PathBuf::from(env::var("SHELL").ok()?);
+    if check_shell_rust(&shell) {
+        return Some(shell);
     }
 
-    let shell = unsafe { CStr::from_ptr(shell) };
-    let shellb = shell.to_bytes();
-    if shellb[0] == b'/' {
-        return 0;
+    let pw = unsafe { libc::getpwuid(libc::getuid()).as_ref() }?;
+    let shell = Path::new(unsafe { CStr::from_ptr(pw.pw_shell) }.to_str().unwrap());
+    if check_shell_rust(&shell) {
+        Some(shell.to_path_buf())
+    } else {
+        // The default value of the default-shell option has been set to
+        // _PATH_BSHELL, so no need to return that again.
+        None
     }
-
-    if areshell(shellb) {
-        return 0;
-    }
-
-    if unsafe { libc::access(shell.as_ptr(), libc::X_OK) } != 0 {
-        return 0;
-    }
-
-    1
 }
 
-fn areshell(mut shell: &[u8]) -> bool {
-    if let Some(i) = shell.iter().position(|&b| b == b'/') {
-        shell = &shell[i + 1..];
+pub fn check_shell_rust(shell: impl AsRef<Path>) -> bool {
+    let shell = shell.as_ref();
+    if !shell.starts_with("/") {
+        return false;
     }
 
+    if are_shell(shell) {
+        return false;
+    }
+
+    if unsafe {
+        libc::access(
+            CString::new(shell.as_os_str().as_bytes()).unwrap().as_ptr(),
+            libc::X_OK,
+        )
+    } != 0
+    {
+        return false;
+    }
+
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn checkshell(shell: *const c_char) -> c_int {
+    let shell = unsafe { CStr::from_ptr(shell) }.to_str().unwrap();
+    if check_shell_rust(shell) { 1 } else { 0 }
+}
+
+fn are_shell(shell: &Path) -> bool {
+    let ptr = shell.file_name().unwrap_or_default();
     let progname = getprogname();
-    shell == progname.strip_prefix(b"-").unwrap_or(progname)
+    ptr.to_str().unwrap() == progname.strip_prefix('-').unwrap_or(progname)
 }
 
 /// Set the file descriptor to blocking if state is 0, non-blocking otherwise.
