@@ -72,6 +72,13 @@ unsafe extern "C" {
     static mut global_w_options: *mut Options;
     fn options_create(parent: *mut Options) -> *mut Options;
     fn options_default(oo: *mut Options, oe: *const OptionsTableEntry) -> *mut OptionsEntry;
+    fn options_set_string(
+        oo: *mut Options,
+        name: *const c_char,
+        append: c_int,
+        fmt: *const c_char,
+        ...
+    ) -> *mut OptionsEntry;
 
     // https://github.com/rust-lang/rust/issues/54450
     static options_table: OptionsTableEntry;
@@ -134,6 +141,20 @@ fn main() {
             }
 
             oe_ptr = oe_ptr.add(1);
+        }
+    }
+
+    // The default shell comes from SHELL or from the user's passwd entry
+    // if available.
+    if let Some(shell) = tmux_rs::get_shell() {
+        unsafe {
+            options_set_string(
+                global_s_options,
+                c"default-shell".as_ptr(),
+                0,
+                c"%s".as_ptr(),
+                CString::new(shell.as_os_str().as_bytes()).unwrap().as_ptr(),
+            );
         }
     }
 
