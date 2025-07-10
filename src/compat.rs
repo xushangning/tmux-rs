@@ -6,3 +6,7 @@ pub fn getprogname() -> &'static str {
         .to_str()
         .unwrap()
 }
+
+pub fn getptmfd() -> i32 {
+    i32::MAX
+}
