@@ -1,4 +1,9 @@
-use std::ffi::CStr;
+use core::ffi::CStr;
+
+#[cfg(not(target_os = "openbsd"))]
+pub fn pledge(_promises: Option<&str>, _execpromises: Option<&str>) -> i32 {
+    0
+}
 
 // TODO: figure out an easier way to do polyfill on other platforms.
 pub fn getprogname() -> &'static str {

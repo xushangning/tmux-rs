@@ -134,6 +134,13 @@ fn main() {
             panic!("getptmfd");
         }
     }
+    if tmux_rs::pledge(
+        Some("stdio rpath wpath cpath flock fattr unix getpw sendfd recvfd proc exec tty ps"),
+        None,
+    ) != 0
+    {
+        panic!("pledge");
+    }
 
     unsafe {
         global_options = options_create(ptr::null_mut());
