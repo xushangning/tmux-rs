@@ -10,11 +10,19 @@ pub use compat::{getptmfd, pledge};
 pub use options::{Options, OptionsEntry};
 pub use tmux::get_shell;
 
+pub const TMUX_SOCK_PERM: u32 = 7;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub enum ModeKey {
     Emacs,
     Vi,
+}
+
+bitflags! {
+    pub struct Client: u64 {
+        const DEFAULT_SOCKET = 1 << 27;
+    }
 }
 
 /// Option table entries.

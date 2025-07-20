@@ -1,12 +1,27 @@
 use core::{
-    ffi::{c_char, c_int, c_longlong},
+    ffi::{CStr, c_char, c_int, c_longlong},
     marker::{PhantomData, PhantomPinned},
 };
-use std::{env, ffi::CString, os::unix::ffi::OsStrExt, path::PathBuf, ptr};
+use std::{
+    env,
+    ffi::CString,
+    fs::{self, DirBuilder},
+    io::ErrorKind,
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, MetadataExt},
+    },
+    path::{Path, PathBuf},
+    ptr,
+};
 
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use nix::unistd::Uid;
 
-use tmux_rs::{ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope};
+use tmux_rs::{
+    Client, ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope, TMUX_SOCK_PERM,
+};
 
 #[derive(Parser)]
 #[command(version)]
@@ -29,8 +44,8 @@ struct Cli {
     #[arg(short = 'l')]
     login: bool,
 
-    #[arg(short = 'L')]
-    socket_name: Option<String>,
+    #[arg(short = 'L', value_name = "SOCKET_NAME")]
+    label: Option<String>,
 
     #[arg(short = 'N')]
     no_start_server: bool,
@@ -52,6 +67,12 @@ struct Cli {
 struct Environ {
     _data: (),
     _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+#[repr(C)]
+struct EnvironEntry {
+    name: *const c_char,
+    value: *const c_char,
 }
 
 #[repr(C)]
@@ -92,7 +113,9 @@ unsafe extern "C" {
     fn environ_create() -> *mut Environ;
     fn environ_put(env: *mut Environ, var: *const c_char, flags: c_int);
     fn environ_set(env: *mut Environ, name: *const c_char, flags: c_int, fmt: *const c_char, ...);
+    fn environ_find(env: *mut Environ, name: *const c_char) -> *const EnvironEntry;
 
+    static mut socket_path: *const c_char;
     static mut ptm_fd: c_int;
 
     fn log_add_level();
@@ -100,7 +123,73 @@ unsafe extern "C" {
     fn osdep_event_init() -> *mut EventBase;
 }
 
+fn expand_path(path: &str, home: Option<&Path>) -> Option<PathBuf> {
+    if path.starts_with("~/") {
+        return Some(home?.join(&path[2..]));
+    }
+
+    if path.starts_with('$') {
+        let end = path.find('/').unwrap_or(path.len());
+        let name = &path[1..end];
+        let value = unsafe {
+            CStr::from_ptr(
+                environ_find(global_environ, CString::new(name).unwrap().as_ptr())
+                    .as_ref()?
+                    .value,
+            )
+        }
+        .to_str()
+        .unwrap();
+        return Some(Path::new(value).join(Path::new(&path[end..])));
+    }
+
+    Some(PathBuf::from(path))
+}
+
+fn expand_paths(s: &str, ignore_errors: bool) -> impl Iterator<Item = PathBuf> {
+    let home = env::home_dir();
+    s.split(':').filter_map(move |next| {
+        let expanded = expand_path(next, home.as_ref().map(|p| p.as_path()))?;
+        fs::canonicalize(&expanded)
+            .ok()
+            .or(if ignore_errors { None } else { Some(expanded) })
+    })
+}
+
+fn make_label(label: Option<&str>) -> Result<PathBuf> {
+    let label = label.unwrap_or("default");
+    let uid = Uid::current();
+
+    let tmux_sock = String::from("$TMUX_TMPDIR:") + env::temp_dir().as_os_str().to_str().unwrap();
+    let mut path = expand_paths(&tmux_sock, true)
+        .next()
+        .ok_or(anyhow!("no suitable socket path"))?;
+
+    path.push(format!("tmux-{uid}"));
+    if let Err(e) = DirBuilder::new().mode(0o700).create(&path) {
+        if e.kind() != ErrorKind::AlreadyExists {
+            return Err(e)
+                .with_context(|| format!("couldn't create directory {}", path.display()))?;
+        }
+    }
+    let sb = fs::symlink_metadata(&path)
+        .with_context(|| format!("couldn't read directory {}", path.display()))?;
+    if !sb.is_dir() {
+        return Err(anyhow!("{} is not a directory", path.display()));
+    }
+    if Uid::from_raw(sb.uid()) != uid || sb.mode() & TMUX_SOCK_PERM != 0 {
+        return Err(anyhow!(
+            "directory {} has unsafe permissions",
+            path.display()
+        ));
+    }
+    path.push(label);
+    Ok(path)
+}
+
 fn main() {
+    let mut flags = Client::empty();
+
     unsafe {
         global_environ = environ_create();
         let mut var = environ;
@@ -209,6 +298,27 @@ fn main() {
             );
             options_set_number(global_w_options, c"mode-keys".as_ptr(), keys as c_longlong);
         }
+    }
+
+    // If socket is specified on the command-line with -S or -L, it is
+    // used. Otherwise, $TMUX is checked and if that fails "default" is
+    // used.
+    let path = cli.path.unwrap_or_else(|| {
+        if cli.label.is_none() {
+            let s = env::var("TMUX").unwrap_or_default();
+            let s = s.split(',').next().unwrap_or_default();
+            if s != "" {
+                return PathBuf::from(s);
+            }
+        }
+
+        flags |= Client::DEFAULT_SOCKET;
+        make_label(cli.label.as_deref()).unwrap()
+    });
+    unsafe {
+        socket_path = CString::new(path.into_os_string().as_bytes())
+            .unwrap()
+            .into_raw();
     }
 
     dbg!(unsafe { osdep_event_init() });
