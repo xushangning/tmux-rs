@@ -20,7 +20,8 @@ use clap::Parser;
 use nix::unistd::Uid;
 
 use tmux_rs::{
-    Client, ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope, TMUX_SOCK_PERM,
+    Client, ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope, TMUX_CONF,
+    TMUX_SOCK_PERM,
 };
 
 #[derive(Parser)]
@@ -121,6 +122,9 @@ unsafe extern "C" {
     fn log_add_level();
 
     fn osdep_event_init() -> *mut EventBase;
+
+    static mut cfg_files: *mut *mut c_char;
+    static mut cfg_nfiles: c_int;
 }
 
 fn expand_path(path: &str, home: Option<&Path>) -> Option<PathBuf> {
@@ -208,6 +212,17 @@ fn main() {
                     .as_ptr(),
             );
         }
+    }
+    let mut cfg_paths = expand_paths(TMUX_CONF, true)
+        .map(|path| {
+            CString::new(path.into_os_string().as_bytes())
+                .unwrap()
+                .into_raw()
+        })
+        .collect::<Vec<_>>();
+    unsafe {
+        cfg_files = cfg_paths.as_mut_ptr();
+        cfg_nfiles = cfg_paths.len().try_into().unwrap();
     }
 
     let cli = Cli::parse();
