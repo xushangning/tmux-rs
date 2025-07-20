@@ -30,8 +30,8 @@ struct Cli {
     #[arg(short = '2')]
     force_256: bool,
 
-    #[arg(short = 'c')]
-    shell_command: Option<String>,
+    #[arg(short = 'c', value_name = "SHELL_COMMAND")]
+    sh_command: Option<String>,
 
     #[arg(short = 'D')]
     no_daemon: bool,
@@ -118,6 +118,7 @@ unsafe extern "C" {
 
     static mut socket_path: *const c_char;
     static mut ptm_fd: c_int;
+    static mut shell_command: *const c_char;
 
     fn log_add_level();
 
@@ -226,6 +227,11 @@ fn main() {
     }
 
     let cli = Cli::parse();
+    if let Some(command) = cli.sh_command {
+        unsafe {
+            shell_command = CString::new(command).unwrap().into_raw();
+        }
+    }
     for _ in 0..cli.verbose {
         unsafe {
             log_add_level();
