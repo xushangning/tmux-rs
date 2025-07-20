@@ -40,7 +40,7 @@ struct Cli {
     control: u8,
 
     #[arg(short = 'f')]
-    config: Option<PathBuf>,
+    config: Vec<PathBuf>,
 
     #[arg(short = 'l')]
     login: bool,
@@ -124,6 +124,7 @@ unsafe extern "C" {
 
     fn osdep_event_init() -> *mut EventBase;
 
+    static mut cfg_quiet: c_int;
     static mut cfg_files: *mut *mut c_char;
     static mut cfg_nfiles: c_int;
 }
@@ -230,6 +231,19 @@ fn main() {
     if let Some(command) = cli.sh_command {
         unsafe {
             shell_command = CString::new(command).unwrap().into_raw();
+        }
+    }
+    if !cli.config.is_empty() {
+        cfg_paths.clear();
+        cfg_paths.extend(cli.config.iter().map(|path| {
+            CString::new(path.as_os_str().as_bytes())
+                .unwrap()
+                .into_raw()
+        }));
+        unsafe {
+            cfg_files = cfg_paths.as_mut_ptr();
+            cfg_nfiles = cfg_paths.len().try_into().unwrap();
+            cfg_quiet = 0;
         }
     }
     for _ in 0..cli.verbose {
