@@ -10,6 +10,8 @@ pub use compat::{getptmfd, pledge};
 pub use options::{Options, OptionsEntry};
 pub use tmux::get_shell;
 
+pub const TMUX_CONF: &str =
+    "/etc/tmux.conf:~/.tmux.conf:$XDG_CONFIG_HOME/tmux/tmux.conf:~/.config/tmux/tmux.conf";
 pub const TMUX_SOCK_PERM: u32 = 7;
 
 #[repr(C)]
