@@ -12,11 +12,12 @@ use std::{
         fs::{DirBuilderExt, MetadataExt},
     },
     path::{Path, PathBuf},
-    ptr,
+    process, ptr,
 };
 
 use anyhow::{Context, Result, anyhow};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use libc::{self, CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
@@ -55,13 +56,16 @@ struct Cli {
     path: Option<PathBuf>,
 
     #[arg(short = 'T')]
-    features: Option<String>,
+    features: Vec<String>,
 
     #[arg(short = 'u')]
     utf_8: bool,
 
     #[arg(short = 'v', action = clap::ArgAction::Count)]
     verbose: u8,
+
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    command: Vec<String>,
 }
 
 #[repr(C)]
@@ -120,9 +124,18 @@ unsafe extern "C" {
     static mut ptm_fd: c_int;
     static mut shell_command: *const c_char;
 
+    fn tty_add_features(feat: *mut c_int, s: *const c_char, separators: *const c_char);
+
     fn log_add_level();
 
     fn osdep_event_init() -> *mut EventBase;
+    fn client_main(
+        event_base: *mut EventBase,
+        argc: c_int,
+        argv: *mut *mut c_char,
+        flags: u64,
+        fd: c_int,
+    ) -> c_int;
 
     static mut cfg_quiet: c_int;
     static mut cfg_files: *mut *mut c_char;
@@ -194,7 +207,33 @@ fn make_label(label: Option<&str>) -> Result<PathBuf> {
 }
 
 fn main() {
+    unsafe {
+        if libc::setlocale(LC_CTYPE, c"en_US.UTF-8".as_ptr()).is_null()
+            && libc::setlocale(LC_CTYPE, c"C.UTF-8".as_ptr()).is_null()
+        {
+            if libc::setlocale(LC_CTYPE, c"".as_ptr()).is_null() {
+                panic!("invalid LC_ALL, LC_CTYPE or LANG");
+            }
+            let s = libc::nl_langinfo(CODESET);
+            let s = str::from_utf8(if s.is_null() {
+                b""
+            } else {
+                CStr::from_ptr(s).to_bytes()
+            })
+            .unwrap();
+            if !s.eq_ignore_ascii_case("UTF-8") && !s.eq_ignore_ascii_case("UTF8") {
+                panic!("need UTF-8 locale (LC_CTYPE) but have {s}",);
+            }
+        }
+
+        libc::setlocale(LC_TIME, c"".as_ptr());
+        // tzset();
+    }
+
     let mut flags = Client::empty();
+    if env::args().next().map_or(false, |arg| arg.starts_with("-")) {
+        flags = Client::LOGIN;
+    }
 
     unsafe {
         global_environ = environ_create();
@@ -228,9 +267,24 @@ fn main() {
     }
 
     let cli = Cli::parse();
-    if let Some(command) = cli.sh_command {
+    let mut feat: c_int = 0;
+    if cli.force_256 {
         unsafe {
-            shell_command = CString::new(command).unwrap().into_raw();
+            tty_add_features(&mut feat as *mut c_int, c"256".as_ptr(), c":,".as_ptr());
+        }
+    }
+    if let Some(command) = cli.sh_command.as_ref() {
+        unsafe {
+            shell_command = CString::new(command.as_str()).unwrap().into_raw();
+        }
+    }
+    if cli.no_daemon {
+        flags |= Client::NO_FORK;
+    }
+    if cli.control > 0 {
+        flags |= Client::CONTROL;
+        if cli.control > 1 {
+            flags |= Client::CONTROL_CONTROL;
         }
     }
     if !cli.config.is_empty() {
@@ -246,10 +300,33 @@ fn main() {
             cfg_quiet = 0;
         }
     }
+    if cli.login {
+        flags |= Client::LOGIN;
+    }
+    if cli.no_start_server {
+        flags |= Client::NO_START_SERVER;
+    }
+    for feat_s in &cli.features {
+        unsafe {
+            tty_add_features(
+                &mut feat as *mut c_int,
+                CString::new(feat_s.as_bytes()).unwrap().as_ptr(),
+                c":,".as_ptr(),
+            );
+        }
+    }
+    if cli.utf_8 {
+        flags |= Client::UTF8;
+    }
     for _ in 0..cli.verbose {
         unsafe {
             log_add_level();
         }
+    }
+
+    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(Client::NO_FORK)) {
+        Cli::command().print_help().unwrap();
+        process::exit(1);
     }
 
     unsafe {
@@ -264,6 +341,41 @@ fn main() {
     ) != 0
     {
         panic!("pledge");
+    }
+
+    // tmux is a UTF-8 terminal, so if TMUX is set, assume UTF-8.
+    // Otherwise, if the user has set LC_ALL, LC_CTYPE or LANG to contain
+    // UTF-8, it is a safe assumption that either they are using a UTF-8
+    // terminal, or if not they know that output from UTF-8-capable
+    // programs may be wrong.
+    if env::var_os("TMUX").is_some() {
+        flags |= Client::UTF8;
+    } else {
+        let s = match env::var("LC_ALL").ok() {
+            Some(s) => {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+            None => None,
+        }
+        .or(match env::var("LC_CTYPE").ok() {
+            Some(s) => {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+            None => None,
+        })
+        .or(env::var("LANG").ok())
+        .unwrap_or_default();
+        if s.eq_ignore_ascii_case("UTF-8") || s.eq_ignore_ascii_case("UTF8") {
+            flags |= Client::UTF8;
+        }
     }
 
     unsafe {
@@ -356,5 +468,21 @@ fn main() {
             .into_raw();
     }
 
-    dbg!(unsafe { osdep_event_init() });
+    let mut argv = cli
+        .command
+        .iter()
+        .map(|s| CString::new(s.as_bytes()).unwrap().into_raw())
+        .collect::<Vec<_>>();
+    let argc = argv.len();
+    argv.push(ptr::null::<c_char>() as *mut c_char);
+    // Pass control to the client.
+    process::exit(unsafe {
+        client_main(
+            osdep_event_init(),
+            argc.try_into().unwrap(),
+            argv.as_mut_ptr(),
+            flags.bits(),
+            feat,
+        )
+    });
 }

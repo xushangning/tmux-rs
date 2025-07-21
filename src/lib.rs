@@ -23,7 +23,13 @@ pub enum ModeKey {
 
 bitflags! {
     pub struct Client: u64 {
+        const LOGIN = 1 << 1;
+        const NO_START_SERVER = 1 << 12;
+        const CONTROL = 1 << 13;
+        const CONTROL_CONTROL = 1 << 14;
+        const UTF8 = 1 << 16;
         const DEFAULT_SOCKET = 1 << 27;
+        const NO_FORK = 1 << 30;
     }
 }
 
