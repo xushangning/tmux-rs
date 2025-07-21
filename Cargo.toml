@@ -10,6 +10,8 @@ crate-type = ["lib", "staticlib"]
 [dependencies]
 anyhow = "1.0.98"
 bitflags = "2.9.1"
-clap = { version = "4.5.40", features = ["derive"] }
+# Patch clap to fix https://github.com/clap-rs/clap/issues/3410 to allow
+# commands like `tmux -f/dev/null new -d` to work in regression tests.
+clap = { path = "../clap", features = ["derive"] }
 libc = "0.2.174"
 nix = { version = "0.30.1", features = ["user"] }
