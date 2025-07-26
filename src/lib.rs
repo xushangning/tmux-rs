@@ -1,14 +1,34 @@
-use core::ffi::{CStr, c_char, c_int, c_longlong, c_uint};
+#![feature(path_add_extension)]
+#![feature(layout_for_ptr)]
 
-use bitflags::bitflags;
-
+mod arguments;
+pub mod client;
+mod cmd;
 mod compat;
-mod options;
-mod tmux;
+pub mod environ;
+mod file;
+mod imsg;
+mod libevent;
+pub mod log;
+pub mod options;
+mod proc;
+mod protocol;
+mod server;
+pub mod tmux;
+mod tty;
 
 pub use compat::{getptmfd, pledge};
+pub use libevent::EventBase;
 pub use options::{Options, OptionsEntry};
-pub use tmux::get_shell;
+pub use tmux::{get_shell, ptm_fd, shell_command, socket_path};
+
+use core::{
+    ffi::{CStr, c_char, c_int, c_longlong, c_uint},
+    marker::{PhantomData, PhantomPinned},
+};
+
+use bitflags::bitflags;
+use bytemuck::AnyBitPattern;
 
 pub const TMUX_CONF: &str =
     "/etc/tmux.conf:~/.tmux.conf:$XDG_CONFIG_HOME/tmux/tmux.conf:~/.config/tmux/tmux.conf";
@@ -21,15 +41,25 @@ pub enum ModeKey {
     Vi,
 }
 
+#[repr(C)]
+struct Client {
+    _data: (),
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
 bitflags! {
-    pub struct Client: u64 {
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, AnyBitPattern)]
+    pub struct ClientFlag: u64 {
         const LOGIN = 1 << 1;
         const NO_START_SERVER = 1 << 12;
         const CONTROL = 1 << 13;
         const CONTROL_CONTROL = 1 << 14;
         const UTF8 = 1 << 16;
         const DEFAULT_SOCKET = 1 << 27;
+        const START_SERVER = 1 << 28;
         const NO_FORK = 1 << 30;
+        const CONTROL_WAIT_EXIT = 1 << 33;
     }
 }
 

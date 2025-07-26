@@ -1,7 +1,4 @@
-use core::{
-    ffi::{CStr, c_char, c_int, c_longlong},
-    marker::{PhantomData, PhantomPinned},
-};
+use core::ffi::{CStr, c_char, c_int, c_longlong};
 use std::{
     env,
     ffi::CString,
@@ -21,8 +18,13 @@ use libc::{self, CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
-    Client, ModeKey, Options, OptionsEntry, OptionsTableEntry, OptionsTableScope, TMUX_CONF,
+    self, ClientFlag, EventBase, ModeKey, OptionsTableEntry, OptionsTableScope, TMUX_CONF,
     TMUX_SOCK_PERM,
+    environ::{environ_create, environ_find, environ_put, environ_set, global_environ},
+    options::{
+        global_options, global_s_options, global_w_options, options_create, options_default,
+        options_set_number, options_set_string,
+    },
 };
 
 #[derive(Parser)]
@@ -68,74 +70,14 @@ struct Cli {
     command: Vec<String>,
 }
 
-#[repr(C)]
-struct Environ {
-    _data: (),
-    _marker: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
-#[repr(C)]
-struct EnvironEntry {
-    name: *const c_char,
-    value: *const c_char,
-}
-
-#[repr(C)]
-struct EventBase {
-    _data: (),
-    _marker: PhantomData<(*mut u8, PhantomPinned)>,
-}
-
 #[link(name = "tmux")]
 unsafe extern "C" {
-    static environ: *const *const c_char;
-
-    /// server options
-    static mut global_options: *mut Options;
-    /// session options
-    static mut global_s_options: *mut Options;
-    /// window options
-    static mut global_w_options: *mut Options;
-    fn options_create(parent: *mut Options) -> *mut Options;
-    fn options_default(oo: *mut Options, oe: *const OptionsTableEntry) -> *mut OptionsEntry;
-    fn options_set_string(
-        oo: *mut Options,
-        name: *const c_char,
-        append: c_int,
-        fmt: *const c_char,
-        ...
-    ) -> *mut OptionsEntry;
-    fn options_set_number(
-        oo: *mut Options,
-        name: *const c_char,
-        value: c_longlong,
-    ) -> *mut OptionsEntry;
-
     // https://github.com/rust-lang/rust/issues/54450
     static options_table: OptionsTableEntry;
 
-    static mut global_environ: *mut Environ;
-    fn environ_create() -> *mut Environ;
-    fn environ_put(env: *mut Environ, var: *const c_char, flags: c_int);
-    fn environ_set(env: *mut Environ, name: *const c_char, flags: c_int, fmt: *const c_char, ...);
-    fn environ_find(env: *mut Environ, name: *const c_char) -> *const EnvironEntry;
-
-    static mut socket_path: *const c_char;
-    static mut ptm_fd: c_int;
-    static mut shell_command: *const c_char;
-
     fn tty_add_features(feat: *mut c_int, s: *const c_char, separators: *const c_char);
 
-    fn log_add_level();
-
     fn osdep_event_init() -> *mut EventBase;
-    fn client_main(
-        event_base: *mut EventBase,
-        argc: c_int,
-        argv: *mut *mut c_char,
-        flags: u64,
-        fd: c_int,
-    ) -> c_int;
 
     static mut cfg_quiet: c_int;
     static mut cfg_files: *mut *mut c_char;
@@ -207,6 +149,10 @@ fn make_label(label: Option<&str>) -> Result<PathBuf> {
 }
 
 fn main() {
+    // TODO: move the logger setup code to log_open.
+    spdlog::default_logger().set_level_filter(spdlog::LevelFilter::All);
+    spdlog::init_log_crate_proxy().unwrap();
+
     unsafe {
         if libc::setlocale(LC_CTYPE, c"en_US.UTF-8".as_ptr()).is_null()
             && libc::setlocale(LC_CTYPE, c"C.UTF-8".as_ptr()).is_null()
@@ -227,17 +173,21 @@ fn main() {
         }
 
         libc::setlocale(LC_TIME, c"".as_ptr());
+        // The call to tzset appears very early in the Git history of tmux
+        // (actually the second commit a41ece5ff0d3ce7a0b7d987baa9759f8a012b48b).
+        // I don't believe it's still necessary as time zone related functions
+        // will automatically call tzset() if needed.
         // tzset();
     }
 
-    let mut flags = Client::empty();
+    let mut flags = ClientFlag::empty();
     if env::args().next().map_or(false, |arg| arg.starts_with("-")) {
-        flags = Client::LOGIN;
+        flags = ClientFlag::LOGIN;
     }
 
     unsafe {
         global_environ = environ_create();
-        let mut var = environ;
+        let mut var = tmux_rs::tmux::environ;
         while !(*var).is_null() {
             environ_put(global_environ, *var, 0);
             var = var.add(1);
@@ -275,16 +225,16 @@ fn main() {
     }
     if let Some(command) = cli.sh_command.as_ref() {
         unsafe {
-            shell_command = CString::new(command.as_str()).unwrap().into_raw();
+            tmux_rs::shell_command = CString::new(command.as_str()).unwrap().into_raw();
         }
     }
     if cli.no_daemon {
-        flags |= Client::NO_FORK;
+        flags |= ClientFlag::NO_FORK;
     }
     if cli.control > 0 {
-        flags |= Client::CONTROL;
+        flags |= ClientFlag::CONTROL;
         if cli.control > 1 {
-            flags |= Client::CONTROL_CONTROL;
+            flags |= ClientFlag::CONTROL_CONTROL;
         }
     }
     if !cli.config.is_empty() {
@@ -301,10 +251,10 @@ fn main() {
         }
     }
     if cli.login {
-        flags |= Client::LOGIN;
+        flags |= ClientFlag::LOGIN;
     }
     if cli.no_start_server {
-        flags |= Client::NO_START_SERVER;
+        flags |= ClientFlag::NO_START_SERVER;
     }
     for feat_s in &cli.features {
         unsafe {
@@ -316,32 +266,29 @@ fn main() {
         }
     }
     if cli.utf_8 {
-        flags |= Client::UTF8;
+        flags |= ClientFlag::UTF8;
     }
     for _ in 0..cli.verbose {
-        unsafe {
-            log_add_level();
-        }
+        tmux_rs::log::add_level();
     }
 
-    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(Client::NO_FORK)) {
+    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(ClientFlag::NO_FORK))
+    {
         Cli::command().print_help().unwrap();
         process::exit(1);
     }
 
     unsafe {
-        ptm_fd = tmux_rs::getptmfd();
-        if ptm_fd == -1 {
+        tmux_rs::ptm_fd = tmux_rs::getptmfd();
+        if tmux_rs::ptm_fd == -1 {
             panic!("getptmfd");
         }
     }
-    if tmux_rs::pledge(
+    tmux_rs::pledge(
         Some("stdio rpath wpath cpath flock fattr unix getpw sendfd recvfd proc exec tty ps"),
         None,
-    ) != 0
-    {
-        panic!("pledge");
-    }
+    )
+    .expect("pledge");
 
     // tmux is a UTF-8 terminal, so if TMUX is set, assume UTF-8.
     // Otherwise, if the user has set LC_ALL, LC_CTYPE or LANG to contain
@@ -349,7 +296,7 @@ fn main() {
     // terminal, or if not they know that output from UTF-8-capable
     // programs may be wrong.
     if env::var_os("TMUX").is_some() {
-        flags |= Client::UTF8;
+        flags |= ClientFlag::UTF8;
     } else {
         let s = match env::var("LC_ALL").ok() {
             Some(s) => {
@@ -374,7 +321,7 @@ fn main() {
         .or(env::var("LANG").ok())
         .unwrap_or_default();
         if s.eq_ignore_ascii_case("UTF-8") || s.eq_ignore_ascii_case("UTF8") {
-            flags |= Client::UTF8;
+            flags |= ClientFlag::UTF8;
         }
     }
 
@@ -459,30 +406,20 @@ fn main() {
             }
         }
 
-        flags |= Client::DEFAULT_SOCKET;
+        flags |= ClientFlag::DEFAULT_SOCKET;
         make_label(cli.label.as_deref()).unwrap()
     });
     unsafe {
-        socket_path = CString::new(path.into_os_string().as_bytes())
+        tmux_rs::socket_path = CString::new(path.into_os_string().as_bytes())
             .unwrap()
             .into_raw();
     }
 
-    let mut argv = cli
-        .command
-        .iter()
-        .map(|s| CString::new(s.as_bytes()).unwrap().into_raw())
-        .collect::<Vec<_>>();
-    let argc = argv.len();
-    argv.push(ptr::null::<c_char>() as *mut c_char);
     // Pass control to the client.
-    process::exit(unsafe {
-        client_main(
-            osdep_event_init(),
-            argc.try_into().unwrap(),
-            argv.as_mut_ptr(),
-            flags.bits(),
-            feat,
-        )
-    });
+    process::exit(tmux_rs::client::main(
+        unsafe { osdep_event_init() },
+        &cli.command,
+        flags,
+        feat,
+    ));
 }
