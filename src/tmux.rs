@@ -1,7 +1,7 @@
 use core::ffi::{CStr, c_char, c_int};
 use std::{
     env,
-    ffi::CString,
+    ffi::{CString, OsString},
     mem::MaybeUninit,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
@@ -10,6 +10,15 @@ use std::{
 use libc;
 
 use crate::compat::getprogname;
+
+#[link(name = "tmux")]
+unsafe extern "C" {
+    pub static environ: *const *const c_char;
+
+    pub static mut socket_path: *const c_char;
+    pub static mut ptm_fd: c_int;
+    pub static mut shell_command: *const c_char;
+}
 
 pub fn get_shell() -> Option<PathBuf> {
     let shell = PathBuf::from(env::var("SHELL").ok()?);
@@ -61,6 +70,15 @@ fn are_shell(shell: &Path) -> bool {
     let ptr = shell.file_name().unwrap_or_default();
     let progname = getprogname();
     ptr.to_str().unwrap() == progname.strip_prefix('-').unwrap_or(progname)
+}
+
+pub(crate) fn shell_argv0(shell: &Path, is_login: bool) -> OsString {
+    let mut ret = OsString::new();
+    if is_login {
+        ret.push("-");
+    }
+    ret.push(shell.file_name().unwrap_or(shell.as_os_str()));
+    ret
 }
 
 /// Set the file descriptor to blocking if state is 0, non-blocking otherwise.
