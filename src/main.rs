@@ -18,8 +18,7 @@ use libc::{self, CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
-    self, ClientFlag, EventBase, ModeKey, OptionsTableEntry, OptionsTableScope, TMUX_CONF,
-    TMUX_SOCK_PERM,
+    self, ClientFlag, ModeKey, OptionsTableEntry, OptionsTableScope, TMUX_CONF, TMUX_SOCK_PERM,
     environ::{environ_create, environ_find, environ_put, environ_set, global_environ},
     options::{
         global_options, global_s_options, global_w_options, options_create, options_default,
@@ -76,8 +75,6 @@ unsafe extern "C" {
     static options_table: OptionsTableEntry;
 
     fn tty_add_features(feat: *mut c_int, s: *const c_char, separators: *const c_char);
-
-    fn osdep_event_init() -> *mut EventBase;
 
     static mut cfg_quiet: c_int;
     static mut cfg_files: *mut *mut c_char;
@@ -417,7 +414,7 @@ fn main() {
 
     // Pass control to the client.
     process::exit(tmux_rs::client::main(
-        unsafe { osdep_event_init() },
+        tmux_rs::osdep::event_init(),
         &cli.command,
         flags,
         feat,

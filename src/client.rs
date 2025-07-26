@@ -16,6 +16,7 @@ use std::{
 };
 
 use libc::{VMIN, VTIME};
+use libevent_sys::{evbuffer, event_base};
 use log::debug;
 use nix::{
     errno::Errno,
@@ -41,7 +42,6 @@ use crate::{
         file_write_left, file_write_open,
     },
     imsg::{IMSG_HEADER_SIZE, IMsg, IMsgHdr, MAX_IMSG_SIZE},
-    libevent::{EvBuffer, EventBase},
     options::{global_options, global_s_options, global_w_options, options_free},
     pledge,
     proc::{
@@ -132,7 +132,7 @@ fn get_lock(lockfile: &Path) -> Result<File, GetLockError> {
 }
 
 /// Connect client to server.
-fn connect(base: *mut EventBase, path: &Path, flags: ClientFlag) -> io::Result<UnixStream> {
+fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<UnixStream> {
     debug!("socket is {}", path.display());
 
     let mut _lock: Option<File> = None;
@@ -207,7 +207,7 @@ fn exit() {
     }
 }
 
-pub fn main(base: *mut EventBase, args: &Vec<String>, mut flags: ClientFlag, feat: c_int) -> i32 {
+pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, feat: c_int) -> i32 {
     let mut argv = args
         .iter()
         .map(|s| CString::new(s.as_bytes()).unwrap().into_raw())
@@ -688,7 +688,7 @@ extern "C" fn file_check_cb(
     _path: *const c_char,
     _error: c_int,
     _closed: c_int,
-    _buffer: *mut EvBuffer,
+    _buffer: *mut evbuffer,
     _data: *mut c_void,
 ) {
     if unsafe { EXIT_FLAG } {
