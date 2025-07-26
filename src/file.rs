@@ -3,7 +3,9 @@ use core::{
     marker::{PhantomData, PhantomPinned},
 };
 
-use crate::{compat::tree::RbHead, imsg::IMsg, libevent::EvBuffer, proc::Peer};
+use libevent_sys::evbuffer;
+
+use crate::{compat::tree::RbHead, imsg::IMsg, proc::Peer};
 
 #[repr(C)]
 pub(crate) struct ClientFile {
@@ -14,7 +16,7 @@ pub(crate) struct ClientFile {
 pub(crate) type ClientFiles = RbHead<ClientFile>;
 
 pub(crate) type ClientFileCb =
-    extern "C" fn(*mut crate::Client, *const c_char, c_int, c_int, *mut EvBuffer, *mut c_void);
+    extern "C" fn(*mut crate::Client, *const c_char, c_int, c_int, *mut evbuffer, *mut c_void);
 
 #[link(name = "tmux")]
 unsafe extern "C" {

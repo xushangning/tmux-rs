@@ -8,9 +8,9 @@ mod compat;
 pub mod environ;
 mod file;
 mod imsg;
-mod libevent;
 pub mod log;
 pub mod options;
+pub mod osdep;
 mod proc;
 mod protocol;
 mod server;
@@ -18,7 +18,6 @@ pub mod tmux;
 mod tty;
 
 pub use compat::{getptmfd, pledge};
-pub use libevent::EventBase;
 pub use options::{Options, OptionsEntry};
 pub use tmux::{get_shell, ptm_fd, shell_command, socket_path};
 
