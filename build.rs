@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn main() {
     // Get the directory of the Cargo.toml (project root)
@@ -8,4 +8,22 @@ fn main() {
     let libs_path = Path::new(&manifest_dir).join(".libs");
     // Convert the path to a string and print the rustc-link-search directive
     println!("cargo:rustc-link-search={}", libs_path.display());
+
+    println!("cargo:rustc-link-lib=event_core");
+    println!("cargo:rustc-link-lib=tmux");
+    let bindings = bindgen::Builder::default()
+        .header("tmux.h")
+        // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
+        .clang_arg("-D HAVE_CLOCK_GETTIME")
+        .use_core()
+        .generate_cstr(true)
+        .wrap_unsafe_ops(true)
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings");
+    let mut out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    out_path.push("bindings.rs");
+    bindings
+        .write_to_file(out_path)
+        .expect("Couldn't write bindings!");
 }

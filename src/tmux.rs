@@ -11,15 +11,6 @@ use libc;
 
 use crate::compat::getprogname;
 
-#[link(name = "tmux")]
-unsafe extern "C" {
-    pub static environ: *const *const c_char;
-
-    pub static mut socket_path: *const c_char;
-    pub static mut ptm_fd: c_int;
-    pub static mut shell_command: *const c_char;
-}
-
 pub fn get_shell() -> Option<PathBuf> {
     let shell = PathBuf::from(env::var("SHELL").ok()?);
     if check_shell_rust(&shell) {

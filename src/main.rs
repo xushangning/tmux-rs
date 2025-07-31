@@ -1,4 +1,4 @@
-use core::ffi::{CStr, c_char, c_int, c_longlong};
+use core::ffi::{CStr, c_int, c_longlong};
 use std::{
     env,
     ffi::CString,
@@ -18,11 +18,12 @@ use libc::{self, CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
-    self, ClientFlag, ModeKey, OptionsTableEntry, OptionsTableScope, TMUX_CONF, TMUX_SOCK_PERM,
-    environ::{environ_create, environ_find, environ_put, environ_set, global_environ},
-    options::{
+    self, ClientFlag, ModeKey, TMUX_CONF, TMUX_SOCK_PERM,
+    tmux_sys::{
+        OPTIONS_TABLE_SERVER, OPTIONS_TABLE_SESSION, OPTIONS_TABLE_WINDOW, cfg_files, cfg_nfiles,
+        cfg_quiet, environ_create, environ_find, environ_put, environ_set, global_environ,
         global_options, global_s_options, global_w_options, options_create, options_default,
-        options_set_number, options_set_string,
+        options_set_number, options_set_string, options_table, tty_add_features,
     },
 };
 
@@ -67,18 +68,6 @@ struct Cli {
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     command: Vec<String>,
-}
-
-#[link(name = "tmux")]
-unsafe extern "C" {
-    // https://github.com/rust-lang/rust/issues/54450
-    static options_table: OptionsTableEntry;
-
-    fn tty_add_features(feat: *mut c_int, s: *const c_char, separators: *const c_char);
-
-    static mut cfg_quiet: c_int;
-    static mut cfg_files: *mut *mut c_char;
-    static mut cfg_nfiles: c_int;
 }
 
 fn expand_path(path: &str, home: Option<&Path>) -> Option<PathBuf> {
@@ -184,7 +173,7 @@ fn main() {
 
     unsafe {
         global_environ = environ_create();
-        let mut var = tmux_rs::tmux::environ;
+        let mut var = tmux_rs::tmux_sys::environ;
         while !(*var).is_null() {
             environ_put(global_environ, *var, 0);
             var = var.add(1);
@@ -217,12 +206,12 @@ fn main() {
     let mut feat: c_int = 0;
     if cli.force_256 {
         unsafe {
-            tty_add_features(&mut feat as *mut c_int, c"256".as_ptr(), c":,".as_ptr());
+            tty_add_features(&raw mut feat, c"256".as_ptr(), c":,".as_ptr());
         }
     }
     if let Some(command) = cli.sh_command.as_ref() {
         unsafe {
-            tmux_rs::shell_command = CString::new(command.as_str()).unwrap().into_raw();
+            tmux_rs::tmux_sys::shell_command = CString::new(command.as_str()).unwrap().into_raw();
         }
     }
     if cli.no_daemon {
@@ -276,8 +265,8 @@ fn main() {
     }
 
     unsafe {
-        tmux_rs::ptm_fd = tmux_rs::getptmfd();
-        if tmux_rs::ptm_fd == -1 {
+        tmux_rs::tmux_sys::ptm_fd = tmux_rs::getptmfd();
+        if tmux_rs::tmux_sys::ptm_fd == -1 {
             panic!("getptmfd");
         }
     }
@@ -326,18 +315,19 @@ fn main() {
         global_options = options_create(ptr::null_mut());
         global_s_options = options_create(ptr::null_mut());
         global_w_options = options_create(ptr::null_mut());
-        let mut oe_ptr = &options_table as *const OptionsTableEntry;
+        let mut oe_ptr = options_table.as_ptr();
         loop {
             let oe = oe_ptr.as_ref().unwrap();
             if oe.name.is_null() {
                 break;
             }
 
-            if oe.scope.contains(OptionsTableScope::SERVER) {
+            let scope: u32 = oe.scope.try_into().unwrap();
+            if oe.scope as u32 & OPTIONS_TABLE_SERVER != 0 {
                 options_default(global_options, oe_ptr);
-            } else if oe.scope.contains(OptionsTableScope::SESSION) {
+            } else if scope & OPTIONS_TABLE_SESSION != 0 {
                 options_default(global_s_options, oe_ptr);
-            } else if oe.scope.contains(OptionsTableScope::WINDOW) {
+            } else if scope & OPTIONS_TABLE_WINDOW != 0 {
                 options_default(global_w_options, oe_ptr);
             }
 
@@ -407,7 +397,7 @@ fn main() {
         make_label(cli.label.as_deref()).unwrap()
     });
     unsafe {
-        tmux_rs::socket_path = CString::new(path.into_os_string().as_bytes())
+        tmux_rs::tmux_sys::socket_path = CString::new(path.into_os_string().as_bytes())
             .unwrap()
             .into_raw();
     }

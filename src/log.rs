@@ -1,7 +1,4 @@
-#[link(name = "tmux")]
-unsafe extern "C" {
-    fn log_add_level();
-}
+use crate::tmux_sys::log_add_level;
 
 /// Increment log level.
 pub fn add_level() {

@@ -1,30 +1,18 @@
 #![feature(path_add_extension)]
 #![feature(layout_for_ptr)]
 
-mod arguments;
 pub mod client;
-mod cmd;
 mod compat;
-pub mod environ;
-mod file;
-mod imsg;
 pub mod log;
-pub mod options;
 pub mod osdep;
-mod proc;
 mod protocol;
-mod server;
 pub mod tmux;
-mod tty;
+pub mod tmux_sys;
 
 pub use compat::{getptmfd, pledge};
-pub use options::{Options, OptionsEntry};
-pub use tmux::{get_shell, ptm_fd, shell_command, socket_path};
+pub use tmux::get_shell;
 
-use core::{
-    ffi::{CStr, c_char, c_int, c_longlong, c_uint},
-    marker::{PhantomData, PhantomPinned},
-};
+use core::ffi::{CStr, c_char};
 
 use bitflags::bitflags;
 use bytemuck::AnyBitPattern;
@@ -38,12 +26,6 @@ pub const TMUX_SOCK_PERM: u32 = 7;
 pub enum ModeKey {
     Emacs,
     Vi,
-}
-
-#[repr(C)]
-struct Client {
-    _data: (),
-    _marker: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
 bitflags! {
@@ -60,52 +42,6 @@ bitflags! {
         const NO_FORK = 1 << 30;
         const CONTROL_WAIT_EXIT = 1 << 33;
     }
-}
-
-/// Option table entries.
-#[repr(C)]
-pub enum OptionsTableType {
-    String,
-    Number,
-    Key,
-    Colour,
-    Flag,
-    Choice,
-    Command,
-}
-
-bitflags! {
-    #[repr(C)]
-    pub struct OptionsTableScope: c_int {
-        const NONE = 0;
-        const SERVER = 1;
-        const SESSION = 1 << 1;
-        const WINDOW = 1 << 2;
-        const PANE = 1 << 3;
-    }
-}
-
-#[repr(C)]
-pub struct OptionsTableEntry {
-    pub name: *const c_char,
-    alternative_name: *const c_char,
-    entry_type: OptionsTableType,
-    pub scope: OptionsTableScope,
-    flags: c_int,
-
-    minimum: c_uint,
-    maximum: c_uint,
-    choices: *const *const c_char,
-
-    default_str: *const c_char,
-    default_num: c_longlong,
-    default_arr: *const *const c_char,
-
-    separator: *const c_char,
-    pattern: *const c_char,
-
-    text: *const c_char,
-    unit: *const c_char,
 }
 
 /// Skip until end.
