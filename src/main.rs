@@ -135,7 +135,7 @@ fn make_label(label: Option<&str>) -> Result<PathBuf> {
 }
 
 fn main() {
-    // TODO: move the logger setup code to log_open.
+    // Let the log crate, not the spdlog crate handle log filtering.
     spdlog::default_logger().set_level_filter(spdlog::LevelFilter::All);
     spdlog::init_log_crate_proxy().unwrap();
 

@@ -44,8 +44,7 @@ use crate::{
         file_read_open, file_write_close, file_write_data, file_write_left, file_write_open,
         global_environ, global_options, global_s_options, global_w_options, imsg_hdr, msgtype,
         options_free, proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop,
-        proc_send, proc_set_signals, proc_start, tmuxpeer, tmuxproc, tty_term_free_list,
-        tty_term_read_list,
+        proc_send, proc_set_signals, tmuxpeer, tmuxproc, tty_term_free_list, tty_term_read_list,
     },
 };
 
@@ -236,7 +235,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
 
     unsafe {
         // Create client process structure (starts logging).
-        PROC = proc_start(c"client".as_ptr());
+        PROC = crate::proc::start("client").as_ptr();
         proc_set_signals(PROC, Some(signal));
     }
 

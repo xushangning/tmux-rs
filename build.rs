@@ -27,6 +27,10 @@ fn main() {
         .raw_line("type sessions = crate::compat::tree::rb::Head<session, { core::mem::offset_of!(session, entry) }>;")
         .blocklist_type("window_panes")
         .raw_line("type window_panes = core::mem::MaybeUninit<crate::compat::queue::tailq::Head<window_pane, { core::mem::offset_of!(window_pane, entry) }>>;")
+        .blocklist_type("tmuxproc")
+        .raw_line("pub type tmuxproc = crate::proc::Proc;")
+        .blocklist_type("tmuxpeer")
+        .raw_line("pub type tmuxpeer = crate::proc::Peer;")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()

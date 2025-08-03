@@ -6,6 +6,7 @@ pub mod compat;
 mod libevent;
 pub mod log;
 pub mod osdep;
+mod proc;
 mod protocol;
 mod server;
 pub mod tmux;

@@ -57,7 +57,7 @@ pub mod tailq {
     }
 
     #[repr(C)]
-    struct Entry<T> {
+    pub(crate) struct Entry<T> {
         /// next element
         next: *mut T,
         /// In the original tmux source code, this field has type *mut T and

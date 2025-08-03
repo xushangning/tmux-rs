@@ -18,3 +18,6 @@ pub fn getprogname() -> &'static str {
 pub fn getptmfd() -> i32 {
     i32::MAX
 }
+
+// TODO: try to implement on Linux first
+pub(crate) fn setproctitle(_title: &str) {}
