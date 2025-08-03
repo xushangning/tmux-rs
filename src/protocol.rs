@@ -10,10 +10,6 @@ pub(crate) const VERSION: i32 = 8;
 #[derive(Clone, Copy)]
 #[allow(dead_code)]
 pub(crate) enum Msg {
-    /// Not explicitly present but implied in the original tmux source code as
-    /// the default value for initialization of static variables.
-    None,
-
     Version = 12,
 
     IdentifyFlags = 100,

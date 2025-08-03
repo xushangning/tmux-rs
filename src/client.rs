@@ -1,3 +1,5 @@
+#![allow(static_mut_refs)]
+
 use core::{
     ffi::{CStr, c_char, c_int, c_uint, c_void},
     mem,
@@ -7,6 +9,7 @@ use std::{
     ffi::{CString, OsStr, OsString},
     fs::{File, OpenOptions, TryLockError},
     io::{self, ErrorKind, IsTerminal, Write},
+    mem::MaybeUninit,
     os::{
         fd::{AsRawFd, IntoRawFd},
         unix::{ffi::OsStrExt, fs::OpenOptionsExt, net::UnixStream, process::CommandExt},
@@ -75,7 +78,7 @@ static mut SUSPENDED: bool = false;
 static EXIT_REASON: Mutex<Option<Exit>> = Mutex::new(None);
 static mut EXIT_FLAG: bool = false;
 static mut EXIT_VAL: i32 = 0;
-static mut EXIT_TYPE: Msg = Msg::None;
+static mut EXIT_TYPE: MaybeUninit<Msg> = MaybeUninit::zeroed();
 static EXEC_SHELL: Mutex<Option<OsString>> = Mutex::new(None);
 static EXEC_CMD: Mutex<Option<OsString>> = Mutex::new(None);
 static mut ATTACHED: bool = false;
@@ -423,7 +426,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
     }
 
     // Run command if user requested exec, instead of exiting.
-    if matches!(unsafe { EXIT_TYPE }, Msg::Exec) {
+    if matches!(unsafe { EXIT_TYPE.assume_init_ref() }, Msg::Exec) {
         if FLAGS
             .lock()
             .unwrap()
@@ -448,7 +451,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         }
 
         let ppid = getppid();
-        if matches!(unsafe { EXIT_TYPE }, Msg::DetachKill) && ppid.as_raw() > 1 {
+        if matches!(unsafe { EXIT_TYPE.assume_init_ref() }, Msg::DetachKill) && ppid.as_raw() > 1 {
             kill(ppid, Signal::SIGHUP).ok();
         }
     } else if FLAGS.lock().unwrap().intersects(ClientFlag::CONTROL) {
@@ -898,7 +901,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
 
             unsafe {
                 let exit_session = str::from_utf8(data).unwrap().to_string();
-                EXIT_TYPE = msg_type;
+                EXIT_TYPE.write(msg_type);
                 *EXIT_REASON.lock().unwrap() = Some(if matches!(msg_type, Msg::DetachKill) {
                     Exit::DetachedHup {
                         session: exit_session,
@@ -923,7 +926,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
                 let shell = CStr::from_ptr(data.add(cmd.len() + 1));
                 *EXEC_SHELL.lock().unwrap() = Some(OsStr::from_bytes(shell.to_bytes()).to_owned());
 
-                EXIT_TYPE = msg_type.clone();
+                EXIT_TYPE.write(msg_type);
                 proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
             }
         }
