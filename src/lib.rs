@@ -2,10 +2,12 @@
 #![feature(layout_for_ptr)]
 
 pub mod client;
-mod compat;
+pub mod compat;
+mod libevent;
 pub mod log;
 pub mod osdep;
 mod protocol;
+mod server;
 pub mod tmux;
 pub mod tmux_sys;
 

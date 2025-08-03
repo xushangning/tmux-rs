@@ -8,7 +8,7 @@ use std::{
     fs::{File, OpenOptions, TryLockError},
     io::{self, ErrorKind, IsTerminal, Write},
     os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        fd::{AsRawFd, IntoRawFd},
         unix::{ffi::OsStrExt, fs::OpenOptionsExt, net::UnixStream, process::CommandExt},
     },
     path::{Path, PathBuf},
@@ -44,8 +44,8 @@ use crate::{
         file_read_open, file_write_close, file_write_data, file_write_left, file_write_open,
         global_environ, global_options, global_s_options, global_w_options, imsg_hdr, msgtype,
         options_free, proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop,
-        proc_send, proc_set_signals, proc_start, server_start, tmuxpeer, tmuxproc,
-        tty_term_free_list, tty_term_read_list,
+        proc_send, proc_set_signals, proc_start, tmuxpeer, tmuxproc, tty_term_free_list,
+        tty_term_read_list,
     },
 };
 
@@ -132,7 +132,7 @@ fn get_lock(lockfile: &Path) -> Result<File, GetLockError> {
 fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<UnixStream> {
     debug!("socket is {}", path.display());
 
-    let mut _lock: Option<File> = None;
+    let mut lock: Option<File> = None;
     let mut locked = false;
     let lockfile = path.with_added_extension("lock");
     loop {
@@ -159,7 +159,7 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<
                 }
             }
             debug!("got lock {result:?}");
-            _lock = result.ok();
+            lock = result.ok();
 
             // Always retry at least once, even if we got the lock,
             // because another client could have taken the lock,
@@ -178,19 +178,7 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<
         // 	close(lockfd);
         // 	return (-1);
         // }
-        let stream = unsafe {
-            UnixStream::from_raw_fd(server_start(
-                PROC,
-                flags.bits(),
-                base,
-                // Unlike the original tmux source code, pass in -1 as lockfd
-                // to prevent server_start from closing the fd and unlinking the
-                // file with path given by the variable lockfile.
-                // TODO: change to passing the real lockfd after we port server_start.
-                -1,
-                ptr::null_mut(),
-            ))
-        };
+        let stream = UnixStream::from(crate::server::start(unsafe { PROC }, flags, base, lock));
         stream.set_nonblocking(true).unwrap();
         break Ok(stream);
     }

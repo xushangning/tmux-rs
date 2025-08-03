@@ -1,3 +1,6 @@
+pub mod queue;
+pub mod tree;
+
 use core::ffi::CStr;
 
 #[cfg(not(target_os = "openbsd"))]
