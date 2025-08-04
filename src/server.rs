@@ -9,10 +9,10 @@ use core::{
 };
 use std::{
     ffi::{CString, OsStr},
-    fs::File,
+    fs::{self, File},
     os::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::{ffi::OsStrExt, net::UnixListener},
+        unix::{ffi::OsStrExt, fs::PermissionsExt, net::UnixListener},
     },
     path::Path,
     process,
@@ -20,7 +20,10 @@ use std::{
 };
 
 use anyhow::Context;
-use libc::{S_IRWXG, S_IRWXO, S_IXGRP, S_IXUSR, WNOHANG, WUNTRACED, timeval};
+use libc::{
+    S_IRGRP, S_IROTH, S_IRUSR, S_IRWXG, S_IRWXO, S_IRWXU, S_IXGRP, S_IXOTH, S_IXUSR, WNOHANG,
+    WUNTRACED, timeval,
+};
 use log::debug;
 use nix::{
     errno::Errno,
@@ -44,9 +47,9 @@ use crate::{
         log_get_level, options_get_number, options_set_number, proc_clear_signals,
         proc_fork_and_daemon, proc_loop, proc_set_signals, proc_toggle_log, server_acl_init,
         server_acl_join, server_client_create, server_client_loop, server_client_lost,
-        server_destroy_pane, server_update_socket, session_destroy, sessions_RB_MINMAX,
-        sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
-        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
+        server_destroy_pane, session_destroy, sessions_RB_MINMAX, sessions_RB_NEXT,
+        status_prompt_save_history, tmuxproc, tty_create_log, utf8_update_width_cache,
+        window_pane_destroy_ready, xstrdup,
     },
 };
 
@@ -177,7 +180,7 @@ pub(crate) fn start(
     match create_socket(flags) {
         Ok(listener) => unsafe {
             LISTENER = Some(listener);
-            server_update_socket();
+            update_socket();
         },
         Err(err) => {
             cause = Some(err);
@@ -316,6 +319,46 @@ fn send_exit() {
     }
 }
 
+/// Update socket execute permissions based on whether sessions are attached.
+fn update_socket() {
+    // tmux sets the execute bit when there is an attached session. See commit
+    // d00914ff2b6e6ee6789e6343e74807632efc4018.
+    static mut LAST: i32 = -1;
+
+    let mut n = 0;
+    for s in unsafe { &crate::tmux_sys::sessions } {
+        if unsafe { s.as_ref().attached } != 0 {
+            n += 1;
+            break;
+        }
+    }
+
+    if n != unsafe { LAST } {
+        unsafe {
+            LAST = n;
+        }
+
+        let socket_path = unsafe { crate::util::c_str_to_path(crate::tmux_sys::socket_path) };
+        let mut perm = fs::metadata(socket_path).unwrap().permissions();
+        let mut mode = perm.mode() & (S_IRWXU | S_IRWXG | S_IRWXO) as u32;
+        if n != 0 {
+            if mode & S_IRUSR as u32 != 0 {
+                mode |= S_IXUSR as u32;
+            }
+            if mode & S_IRGRP as u32 != 0 {
+                mode |= S_IXGRP as u32;
+            }
+            if mode & S_IROTH as u32 != 0 {
+                mode |= S_IXOTH as u32;
+            }
+        } else {
+            mode &= !((S_IXUSR | S_IXGRP | S_IXOTH) as u32);
+        }
+        perm.set_mode(mode);
+        fs::set_permissions(socket_path, perm).unwrap();
+    }
+}
+
 /// Callback for server socket.
 extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
     use Errno::*;
@@ -409,7 +452,7 @@ extern "C" fn signal(sig: c_int) {
             event_del(EV_ACCEPT.as_mut_ptr());
             if let Ok(listener) = create_socket(CLIENT_FLAGS) {
                 LISTENER = Some(listener);
-                server_update_socket();
+                update_socket();
             }
             add_accept(0);
         },
