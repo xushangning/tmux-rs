@@ -3,18 +3,24 @@
 #![allow(static_mut_refs)]
 
 use core::{
-    ffi::{CStr, c_char, c_int, c_short, c_void},
+    ffi::{CStr, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
     ptr,
 };
 use std::{
+    ffi::{CString, OsStr},
     fs::File,
-    os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::{ffi::OsStrExt, net::UnixListener},
+    },
+    path::Path,
     process,
     time::Instant,
 };
 
-use libc::{WNOHANG, WUNTRACED, timeval};
+use anyhow::Context;
+use libc::{S_IRWXG, S_IRWXO, S_IXGRP, S_IXUSR, WNOHANG, WUNTRACED, timeval};
 use log::debug;
 use nix::{
     errno::Errno,
@@ -38,17 +44,46 @@ use crate::{
         log_get_level, options_get_number, options_set_number, proc_clear_signals,
         proc_fork_and_daemon, proc_loop, proc_set_signals, proc_toggle_log, server_acl_init,
         server_acl_join, server_client_create, server_client_loop, server_client_lost,
-        server_create_socket, server_destroy_pane, server_update_socket, session_destroy,
-        sessions_RB_MINMAX, sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
+        server_destroy_pane, server_update_socket, session_destroy, sessions_RB_MINMAX,
+        sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
         utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
 };
 
-static mut FD: Option<OwnedFd> = None;
+static mut LISTENER: Option<UnixListener> = None;
 static mut CLIENT_FLAGS: ClientFlag = ClientFlag::empty();
 static mut EXIT: bool = false;
 static mut EV_ACCEPT: MaybeUninit<crate::tmux_sys::event> = MaybeUninit::zeroed();
 static mut EV_TIDY: MaybeUninit<crate::tmux_sys::event> = MaybeUninit::uninit();
+
+/// Create server socket.
+fn create_socket(flags: ClientFlag) -> anyhow::Result<UnixListener> {
+    let socket_path = Path::new(OsStr::from_bytes(unsafe {
+        CStr::from_ptr(crate::tmux_sys::socket_path).to_bytes()
+    }));
+    std::fs::remove_file(socket_path).unwrap();
+
+    let mask = unsafe {
+        libc::umask(
+            S_IXUSR
+                | S_IRWXO
+                | if flags.intersects(ClientFlag::DEFAULT_SOCKET) {
+                    S_IXGRP
+                } else {
+                    S_IRWXG
+                },
+        )
+    };
+    let listener = UnixListener::bind(socket_path)
+        .with_context(|| format!("error creating {}", socket_path.display()))?;
+    unsafe {
+        libc::umask(mask);
+    }
+
+    listener.set_nonblocking(true).unwrap();
+
+    Ok(listener)
+}
 
 /// Tidy up every hour.
 extern "C" fn tidy_event(_fd: c_int, _events: c_short, _data: *mut c_void) {
@@ -134,17 +169,21 @@ pub(crate) fn start(
         libc::gettimeofday(&raw mut crate::tmux_sys::start_time, ptr::null_mut());
     }
 
-    let mut cause: *mut c_char = ptr::null_mut();
+    let mut cause: Option<anyhow::Error> = None;
     let mut c: *mut crate::tmux_sys::client = ptr::null_mut();
     // TODO:
     // #ifdef HAVE_SYSTEMD
     // server_fd = systemd_create_socket(flags, &cause);
-    unsafe {
-        let server_fd = server_create_socket(flags.bits(), &mut cause);
-        if server_fd != -1 {
-            FD = Some(OwnedFd::from_raw_fd(server_fd));
+    match create_socket(flags) {
+        Ok(listener) => unsafe {
+            LISTENER = Some(listener);
             server_update_socket();
+        },
+        Err(err) => {
+            cause = Some(err);
         }
+    }
+    unsafe {
         if !flags.intersects(ClientFlag::NO_FORK) {
             c = server_client_create(fd.assume_init());
         } else {
@@ -156,12 +195,13 @@ pub(crate) fn start(
         mem::drop(lock_file);
     }
 
-    if !cause.is_null() {
+    if let Some(err) = cause {
+        let cause = format!("{err:#}");
         if let Some(c) = unsafe { c.as_mut() } {
-            c.exit_message = cause;
+            c.exit_message = unsafe { xstrdup(CString::new(cause).unwrap().as_ptr()) };
             c.flags |= CLIENT_EXIT as u64;
         } else {
-            eprintln!("{}", unsafe { CStr::from_ptr(cause).to_str().unwrap() });
+            eprintln!("{cause}");
             process::exit(1);
         }
     }
@@ -313,8 +353,8 @@ extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
 /// Add accept event. If timeout is nonzero, add as a timeout instead of a read
 /// event - used to backoff when running out of file descriptors.
 fn add_accept(timeout: c_int) {
-    let fd = match unsafe { FD.as_ref() } {
-        Some(fd) => fd,
+    let listener = match unsafe { LISTENER.as_ref() } {
+        Some(listener) => listener,
         None => return,
     };
 
@@ -326,7 +366,7 @@ fn add_accept(timeout: c_int) {
         if timeout == 0 {
             event_set(
                 EV_ACCEPT.as_mut_ptr(),
-                fd.as_raw_fd(),
+                listener.as_raw_fd(),
                 EV_READ.try_into().unwrap(),
                 Some(accept),
                 ptr::null_mut(),
@@ -335,7 +375,7 @@ fn add_accept(timeout: c_int) {
         } else {
             event_set(
                 EV_ACCEPT.as_mut_ptr(),
-                fd.as_raw_fd(),
+                listener.as_raw_fd(),
                 EV_READ.try_into().unwrap(),
                 Some(accept),
                 ptr::null_mut(),
@@ -367,9 +407,8 @@ extern "C" fn signal(sig: c_int) {
         SIGCHLD => child_signal(),
         SIGUSR1 => unsafe {
             event_del(EV_ACCEPT.as_mut_ptr());
-            let fd = server_create_socket(CLIENT_FLAGS.bits(), ptr::null_mut());
-            if fd != -1 {
-                FD = Some(OwnedFd::from_raw_fd(fd));
+            if let Ok(listener) = create_socket(CLIENT_FLAGS) {
+                LISTENER = Some(listener);
                 server_update_socket();
             }
             add_accept(0);
