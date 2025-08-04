@@ -14,7 +14,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
-use libc::{self, CODESET, LC_CTYPE, LC_TIME};
+use libc::{CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
