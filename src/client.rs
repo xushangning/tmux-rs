@@ -180,7 +180,7 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<
         // 	close(lockfd);
         // 	return (-1);
         // }
-        let stream = UnixStream::from(crate::server::start(unsafe { PROC }, flags, base, lock));
+        let stream = crate::server::start(unsafe { PROC }, flags, base, lock);
         stream.set_nonblocking(true).unwrap();
         break Ok(stream);
     }

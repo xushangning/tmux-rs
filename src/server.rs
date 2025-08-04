@@ -11,8 +11,12 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File},
     os::{
-        fd::{AsRawFd, FromRawFd, OwnedFd},
-        unix::{ffi::OsStrExt, fs::PermissionsExt, net::UnixListener},
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::PermissionsExt,
+            net::{UnixListener, UnixStream},
+        },
     },
     path::Path,
     process,
@@ -120,7 +124,7 @@ pub(crate) fn start(
     flags: ClientFlag,
     base: *mut event_base,
     lock_file: Option<File>,
-) -> OwnedFd {
+) -> UnixStream {
     let set = SigSet::all();
     let mut oldset = SigSet::empty();
     sigprocmask(SigmaskHow::SIG_BLOCK, Some(&set), Some(&mut oldset)).unwrap();
@@ -130,7 +134,7 @@ pub(crate) fn start(
         && unsafe { proc_fork_and_daemon(fd.as_mut_ptr()) } != 0
     {
         sigprocmask(SigmaskHow::SIG_SETMASK, Some(&oldset), None).unwrap();
-        return unsafe { OwnedFd::from_raw_fd(fd.assume_init()) };
+        return unsafe { UnixStream::from_raw_fd(fd.assume_init()) };
     }
     unsafe {
         proc_clear_signals(client, 0);
