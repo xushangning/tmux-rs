@@ -11,7 +11,7 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File},
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::{AsRawFd, IntoRawFd},
         unix::{
             ffi::OsStrExt,
             fs::PermissionsExt,
@@ -35,7 +35,7 @@ use nix::{
         signal::{SigSet, SigmaskHow, Signal, sigprocmask},
         wait::WaitStatus,
     },
-    unistd::Pid,
+    unistd::{ForkResult, Pid},
 };
 
 use crate::{
@@ -48,12 +48,11 @@ use crate::{
         RB_NEGINF, WAIT_ANY, client_CLIENT_EXIT_SHUTDOWN, cmd_wait_for_flush, cmdq_next, event_add,
         event_base, event_del, event_initialized, event_reinit, event_set, format_tidy_jobs,
         input_key_build, job_check_died, job_kill_all, job_still_running, key_bindings_init,
-        log_get_level, options_get_number, options_set_number, proc_clear_signals,
-        proc_fork_and_daemon, proc_loop, proc_set_signals, proc_toggle_log, server_acl_init,
-        server_acl_join, server_client_create, server_client_loop, server_client_lost,
-        server_destroy_pane, session_destroy, sessions_RB_MINMAX, sessions_RB_NEXT,
-        status_prompt_save_history, tmuxproc, tty_create_log, utf8_update_width_cache,
-        window_pane_destroy_ready, xstrdup,
+        log_get_level, options_get_number, options_set_number, proc_clear_signals, proc_loop,
+        proc_set_signals, proc_toggle_log, server_acl_init, server_acl_join, server_client_create,
+        server_client_loop, server_client_lost, server_destroy_pane, session_destroy,
+        sessions_RB_MINMAX, sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
+        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
 };
 
@@ -129,12 +128,14 @@ pub(crate) fn start(
     let mut oldset = SigSet::empty();
     sigprocmask(SigmaskHow::SIG_BLOCK, Some(&set), Some(&mut oldset)).unwrap();
 
-    let mut fd = MaybeUninit::uninit();
-    if !flags.intersects(ClientFlag::NO_FORK)
-        && unsafe { proc_fork_and_daemon(fd.as_mut_ptr()) } != 0
-    {
-        sigprocmask(SigmaskHow::SIG_SETMASK, Some(&oldset), None).unwrap();
-        return unsafe { UnixStream::from_raw_fd(fd.assume_init()) };
+    let mut fd: Option<UnixStream> = None;
+    if !flags.intersects(ClientFlag::NO_FORK) {
+        let (fork_result, sock) = crate::proc::fork_and_daemon();
+        if matches!(fork_result, ForkResult::Parent { child: _ }) {
+            sigprocmask(SigmaskHow::SIG_SETMASK, Some(&oldset), None).unwrap();
+            return sock;
+        }
+        fd = Some(sock);
     }
     unsafe {
         proc_clear_signals(client, 0);
@@ -192,7 +193,7 @@ pub(crate) fn start(
     }
     unsafe {
         if !flags.intersects(ClientFlag::NO_FORK) {
-            c = server_client_create(fd.assume_init());
+            c = server_client_create(fd.unwrap().into_raw_fd());
         } else {
             options_set_number(crate::tmux_sys::global_options, c"exit-empty".as_ptr(), 0);
         }

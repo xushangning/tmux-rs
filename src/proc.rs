@@ -6,7 +6,7 @@ use core::{
 use std::{
     ffi::{CString, OsStr},
     mem,
-    os::unix::ffi::OsStrExt,
+    os::unix::{ffi::OsStrExt, net::UnixStream},
     path::Path,
     process,
 };
@@ -14,6 +14,7 @@ use std::{
 use bitflags::bitflags;
 use libc::uid_t;
 use log::debug;
+use nix::{errno::Errno, unistd::ForkResult};
 
 use crate::{
     compat::queue::tailq,
@@ -103,5 +104,18 @@ pub(crate) fn start(name: &str) -> NonNull<Proc> {
         tp.as_mut().name = xstrdup(CString::new(name).unwrap().as_ptr());
         tailq::Head::new(&mut tp.as_mut().peers);
         tp
+    }
+}
+
+pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
+    let (parent_sock, child_sock) = UnixStream::pair().expect("socketpair failed");
+    match unsafe { nix::unistd::fork() }.expect("fork failed") {
+        ForkResult::Child => {
+            // nix doesn't define daemon for macOS, so we call it ourselves here.
+            #[allow(deprecated)]
+            Errno::result(unsafe { libc::daemon(1, 0) }).expect("daemon failed");
+            (ForkResult::Child, child_sock)
+        }
+        ForkResult::Parent { child } => (ForkResult::Parent { child }, parent_sock),
     }
 }
