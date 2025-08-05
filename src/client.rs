@@ -627,8 +627,7 @@ fn exec(shell: &Path, shell_cmd: &OsStr) -> ! {
     unreachable!()
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn signal(sig: c_int) {
+extern "C" fn signal(sig: c_int) {
     let sig = Signal::try_from(sig).unwrap();
     // As of today, getting the current function name is still not supported in Rust:
     // https://github.com/rust-lang/rfcs/issues/1743
@@ -680,7 +679,6 @@ pub extern "C" fn signal(sig: c_int) {
 }
 
 /// Callback for file write error or close.
-#[unsafe(no_mangle)]
 extern "C" fn file_check_cb(
     _c: *mut crate::tmux_sys::client,
     _path: *const c_char,
@@ -695,7 +693,6 @@ extern "C" fn file_check_cb(
 }
 
 /// Callback for client read events.
-#[unsafe(no_mangle)]
 extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, _arg: *mut c_void) {
     match unsafe { imsg.as_mut() } {
         None => unsafe {
