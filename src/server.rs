@@ -2,6 +2,8 @@
 
 #![allow(static_mut_refs)]
 
+pub(crate) mod client;
+
 use core::{
     ffi::{CStr, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
@@ -11,7 +13,7 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File},
     os::{
-        fd::{AsRawFd, IntoRawFd},
+        fd::AsRawFd,
         unix::{
             ffi::OsStrExt,
             fs::PermissionsExt,
@@ -67,7 +69,8 @@ fn create_socket(flags: ClientFlag) -> anyhow::Result<UnixListener> {
     let socket_path = Path::new(OsStr::from_bytes(unsafe {
         CStr::from_ptr(crate::tmux_sys::socket_path).to_bytes()
     }));
-    std::fs::remove_file(socket_path).unwrap();
+    // Ignore the returned error because the path may not exist.
+    std::fs::remove_file(socket_path).ok();
 
     let mask = unsafe {
         libc::umask(
@@ -193,7 +196,7 @@ pub(crate) fn start(
     }
     unsafe {
         if !flags.intersects(ClientFlag::NO_FORK) {
-            c = server_client_create(fd.unwrap().into_raw_fd());
+            c = crate::server::client::create(fd.unwrap()).as_ptr();
         } else {
             options_set_number(crate::tmux_sys::global_options, c"exit-empty".as_ptr(), 0);
         }

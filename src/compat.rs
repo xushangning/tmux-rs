@@ -1,3 +1,4 @@
+pub mod imsg;
 pub mod queue;
 pub mod tree;
 

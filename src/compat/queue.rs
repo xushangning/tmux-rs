@@ -4,32 +4,46 @@ pub mod tailq {
         ptr::{self, NonNull},
     };
 
-    #[repr(C)]
-    pub struct Head<T, const OFFSET: usize> {
-        first: *mut T,
-        last: NonNull<*mut T>,
-    }
+    // tailq relies on Head being layout compatible with Entry to cast it to Entry,
+    // so we use the new type pattern here.
+    #[repr(transparent)]
+    pub struct Head<T, const OFFSET: usize>(Entry<T>);
 
     impl<T, const OFFSET: usize> Head<T, OFFSET> {
         // new() must not be implemented by returning a Head struct. Doing so
         // will incur a move and leave head.last points to the old location
         // before the move.
         pub fn new(uninit: &mut MaybeUninit<Self>) -> &mut Self {
-            let last = NonNull::from(unsafe { &mut (*uninit.as_mut_ptr()).first });
-            uninit.write(Self {
-                first: ptr::null_mut(),
-                last,
-            })
+            let last = NonNull::from(unsafe { &mut (*uninit.as_mut_ptr()).0 });
+            uninit.write(Self(Entry::<T> {
+                next: ptr::null_mut(),
+                prev: last,
+            }))
         }
 
         pub fn iter(&self) -> Iter<T, OFFSET> {
             Iter {
-                current: NonNull::new(self.first),
+                current: NonNull::new(self.0.next),
             }
         }
 
         pub fn is_empty(&self) -> bool {
-            self.first.is_null()
+            self.0.next.is_null()
+        }
+
+        pub fn push_back(&mut self, elt: NonNull<T>) {
+            let mut entry_ptr = unsafe { Entry::new::<OFFSET>(elt) };
+            let entry = unsafe { entry_ptr.as_mut() };
+            entry.next = ptr::null_mut();
+            entry.prev = self.0.prev;
+            unsafe {
+                self.0.prev.as_mut().next = elt.as_ptr();
+                self.0.prev = entry_ptr;
+            }
+        }
+
+        pub fn front(&self) -> Option<NonNull<T>> {
+            NonNull::new(self.0.next)
         }
     }
 
@@ -65,7 +79,7 @@ pub mod tailq {
         /// in the comment. In reality, the stored address is sometimes cast to
         /// *mut Entry<T> to access the whole Entry struct, so we change the
         /// type to *mut Entry<T>.
-        prev: *mut Entry<T>,
+        prev: NonNull<Entry<T>>,
     }
 
     impl<T> Entry<T> {

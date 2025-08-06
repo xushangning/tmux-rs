@@ -31,6 +31,12 @@ fn main() {
         .raw_line("pub type tmuxproc = crate::proc::Proc;")
         .blocklist_type("tmuxpeer")
         .raw_line("pub type tmuxpeer = crate::proc::Peer;")
+        .blocklist_type("client_windows")
+        .raw_line("pub type client_windows = crate::compat::tree::rb::Head<client_window, { core::mem::offset_of!(client_window, entry) }>;")
+        .blocklist_type("imsg")
+        .raw_line("pub type imsg = crate::compat::imsg::IMsg;")
+        .blocklist_type("imsg_hdr")
+        .raw_line("pub type imsg_hdr = crate::compat::imsg::Hdr;")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()
