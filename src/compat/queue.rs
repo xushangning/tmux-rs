@@ -11,14 +11,23 @@ pub mod tailq {
 
     impl<T, const OFFSET: usize> Head<T, OFFSET> {
         // new() must not be implemented by returning a Head struct. Doing so
-        // will incur a move and leave head.last points to the old location
+        // will incur a move and leave Head.last points to the old location
         // before the move.
         pub fn new(uninit: &mut MaybeUninit<Self>) -> &mut Self {
-            let last = NonNull::from(unsafe { &mut (*uninit.as_mut_ptr()).0 });
-            uninit.write(Self(Entry::<T> {
-                next: ptr::null_mut(),
-                prev: last,
-            }))
+            unsafe {
+                Self::init(uninit.as_mut_ptr());
+                uninit.assume_init_mut()
+            }
+        }
+
+        pub unsafe fn init(out: *mut Self) {
+            unsafe {
+                let last = NonNull::from(&mut (*out).0);
+                out.write(Self(Entry::<T> {
+                    next: ptr::null_mut(),
+                    prev: last,
+                }));
+            }
         }
 
         pub fn iter(&self) -> Iter<T, OFFSET> {
