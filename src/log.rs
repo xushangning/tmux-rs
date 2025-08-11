@@ -1,5 +1,6 @@
 use std::{ffi::CString, sync::Arc};
 
+use log::error;
 use spdlog::sink::FileSink;
 
 use crate::tmux_sys::{log_add_level, log_get_level, log_open};
@@ -46,6 +47,9 @@ pub(crate) fn open(name: &str) {
             })
             .unwrap(),
     );
+    std::panic::set_hook(Box::new(|panic_hook_info| {
+        error!("{panic_hook_info}");
+    }));
 
     unsafe {
         // TODO: move the rest of log_open's code here. We haven't completely
