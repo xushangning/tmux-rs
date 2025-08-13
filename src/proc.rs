@@ -6,7 +6,7 @@ use core::{
 use std::{
     ffi::{CString, OsStr},
     os::{
-        fd::{IntoRawFd, OwnedFd},
+        fd::OwnedFd,
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::Path,
@@ -23,8 +23,8 @@ use crate::{
     protocol::Msg,
     tmux_sys::{
         EV_READ, EV_WRITE, PROTOCOL_VERSION, event_add, event_del, event_get_method,
-        event_get_version, event_set, imsg, imsg_compose, imsg_free, imsg_get, imsgbuf,
-        imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, tmuxproc, xcalloc, xstrdup,
+        event_get_version, event_set, imsg, imsg_free, imsg_get, imsgbuf, imsgbuf_queuelen,
+        imsgbuf_read, imsgbuf_write, tmuxproc, xcalloc, xstrdup,
     },
 };
 
@@ -161,24 +161,14 @@ pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u
         buf.len()
     );
 
-    let retval = unsafe {
-        imsg_compose(
-            &mut peer.ibuf,
-            mem::transmute(msg_type),
-            crate::protocol::VERSION.try_into().unwrap(),
-            -1,
-            fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1),
-            if buf.is_empty() {
-                ptr::null_mut()
-            } else {
-                buf.as_ptr().cast_mut().cast()
-            },
-            buf.len(),
-        )
-    };
-    if retval != 1 {
-        return None;
-    }
+    crate::compat::imsg::compose(
+        &mut peer.ibuf,
+        unsafe { mem::transmute(msg_type) },
+        crate::protocol::VERSION.try_into().unwrap(),
+        None,
+        fd,
+        buf,
+    )?;
     update_event(peer);
     Some(())
 }
