@@ -1,19 +1,55 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
-    mem::{self, MaybeUninit},
+    mem::{self, ManuallyDrop, MaybeUninit},
     ptr::NonNull,
 };
-use std::os::fd::{IntoRawFd, OwnedFd};
+use std::{
+    ops::{Deref, DerefMut},
+    os::fd::{IntoRawFd, OwnedFd},
+};
 
 use bytemuck::NoUninit;
 use nix::unistd::Pid;
 
 use crate::{
     compat::queue::tailq,
-    tmux_sys::{ibuf_fd_set, ibuf_free, imsg_close, imsgbuf},
+    tmux_sys::{ibuf_fd_set, imsg_close, imsgbuf},
 };
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
+
+#[repr(transparent)]
+pub struct OwnedIBuf(NonNull<IBuf>);
+
+impl Drop for OwnedIBuf {
+    fn drop(&mut self) {
+        unsafe {
+            self.0.drop_in_place();
+            libc::free(self.0.as_ptr().cast());
+        }
+    }
+}
+
+impl Deref for OwnedIBuf {
+    type Target = IBuf;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl DerefMut for OwnedIBuf {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl OwnedIBuf {
+    pub fn into_raw(p: Self) -> NonNull<IBuf> {
+        let p = ManuallyDrop::new(p);
+        p.0
+    }
+}
 
 #[repr(C)]
 pub struct IBuf {
@@ -29,28 +65,24 @@ pub struct IBuf {
 impl IBuf {
     const FD_MARK_ON_STACK: c_int = -2;
 
-    pub fn dynamic(len: usize, max: usize) -> nix::Result<NonNull<Self>> {
+    pub fn dynamic(len: usize, max: usize) -> nix::Result<OwnedIBuf> {
         if max == 0 || max < len {
             return Err(nix::Error::EINVAL);
         }
 
-        let Some(mut buf) =
+        let Some(buf) =
             NonNull::new(unsafe { libc::calloc(1, mem::size_of::<Self>()) } as *mut Self)
         else {
             return Err(nix::Error::last());
         };
-        let buf_ref = unsafe { buf.as_mut() };
+        let mut buf = OwnedIBuf(buf);
         if len > 0 {
-            buf_ref.buf = unsafe {
-                NonNull::new(libc::calloc(len, 1) as *mut u8).ok_or_else(|| {
-                    libc::free(buf.as_ptr().cast());
-                    nix::Error::last()
-                })
-            }?;
+            buf.buf = NonNull::new(unsafe { libc::calloc(len, 1) } as *mut u8)
+                .ok_or_else(|| nix::Error::last())?;
         }
-        buf_ref.size = len;
-        buf_ref.max = max;
-        buf_ref.fd = -1;
+        buf.size = len;
+        buf.max = max;
+        buf.fd = -1;
 
         Ok(buf)
     }
@@ -103,6 +135,25 @@ impl IBuf {
     }
 }
 
+impl Drop for IBuf {
+    fn drop(&mut self) {
+        // We don't save and then restore errno because drop() is only called
+        // in Rust code, and all errno values have been saved in Result before
+        // calling drop() in Rust code.
+
+        // if buf lives on the stack abort before causing more harm
+        if self.fd == Self::FD_MARK_ON_STACK {
+            panic!();
+        }
+        unsafe {
+            crate::tmux_sys::freezero(self.buf.as_ptr().cast(), self.size);
+            if self.fd >= 0 {
+                libc::close(self.fd);
+            }
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, NoUninit)]
 pub struct Hdr {
@@ -129,13 +180,11 @@ pub(crate) fn compose(
 ) -> nix::Result<()> {
     let mut wbuf = create(imsg_buf, type_, id, pid, data.len())?;
 
-    unsafe {
-        wbuf.as_mut()
-            .add(data)
-            .inspect_err(|_| ibuf_free(wbuf.as_ptr()))?;
+    wbuf.add(data)?;
 
-        ibuf_fd_set(wbuf.as_ptr(), fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1));
-        imsg_close(imsg_buf, wbuf.as_ptr());
+    unsafe {
+        ibuf_fd_set(wbuf.0.as_ptr(), fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1));
+        imsg_close(imsg_buf, OwnedIBuf::into_raw(wbuf).as_ptr());
     }
 
     Ok(())
@@ -147,7 +196,7 @@ pub(crate) fn create(
     id: u32,
     pid: Option<Pid>,
     mut data_len: usize,
-) -> nix::Result<NonNull<IBuf>> {
+) -> nix::Result<OwnedIBuf> {
     data_len += HEADER_SIZE;
     if data_len > imsg_buf.maxsize as usize {
         return Err(nix::Error::ERANGE);
@@ -165,13 +214,5 @@ pub(crate) fn create(
             .unwrap_or(-1) as u32,
     };
     let mut wbuf = IBuf::dynamic(data_len, imsg_buf.maxsize as usize)?;
-    unsafe {
-        match wbuf.as_mut().add(bytemuck::bytes_of(&hdr)) {
-            Ok(_) => Ok(wbuf),
-            Err(err) => {
-                ibuf_free(wbuf.as_ptr());
-                Err(err)
-            }
-        }
-    }
+    wbuf.add(bytemuck::bytes_of(&hdr)).map(|_| wbuf)
 }
