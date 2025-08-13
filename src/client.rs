@@ -45,9 +45,9 @@ use crate::{
         cmd_list_any_have, cmd_list_free, cmd_pack_argv, cmd_parse_from_arguments,
         cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer, event_base, file_read_cancel,
         file_read_open, file_write_close, file_write_data, file_write_left, file_write_open,
-        global_environ, global_options, global_s_options, global_w_options, imsg_hdr, msgtype,
-        options_free, proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop,
-        proc_send, proc_set_signals, tmuxpeer, tmuxproc, tty_term_free_list, tty_term_read_list,
+        global_environ, global_options, global_s_options, global_w_options, imsg_hdr, options_free,
+        proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop, proc_set_signals,
+        tmuxpeer, tmuxproc, tty_term_free_list, tty_term_read_list,
     },
 };
 
@@ -398,24 +398,15 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
             }
 
             // Send the command.
-            if unsafe {
-                proc_send(
-                    PEER,
-                    msg as msgtype,
-                    -1,
-                    data_buffer.as_ptr().cast(),
-                    total_size,
-                )
-            } != 0
-            {
+            if crate::proc::send(unsafe { &mut *PEER }, msg, None, &data_buffer).is_none() {
                 eprintln!("failed to send command");
                 return 1;
             }
         }
 
-        Msg::Shell => unsafe {
-            proc_send(PEER, msg as msgtype, -1, ptr::null(), 0);
-        },
+        Msg::Shell => {
+            crate::proc::send(unsafe { &mut *PEER }, msg, None, &[]);
+        }
 
         _ => {}
     }
@@ -497,86 +488,76 @@ fn send_identify(
     let flags = *FLAGS.lock().unwrap();
 
     unsafe {
-        proc_send(
-            PEER,
-            Msg::IdentifyLongFlags as msgtype,
-            -1,
-            (&raw const flags).cast(),
-            mem::size_of_val(&flags),
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyLongFlags,
+            None,
+            bytemuck::bytes_of(&flags),
         );
         // for compatibility, we send the flags again.
-        proc_send(
-            PEER,
-            Msg::IdentifyLongFlags as msgtype,
-            -1,
-            (&raw const flags).cast(),
-            mem::size_of_val(&flags),
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyLongFlags,
+            None,
+            bytemuck::bytes_of(&flags),
         );
 
-        proc_send(
-            PEER,
-            Msg::IdentifyTerm as msgtype,
-            -1,
-            CString::new(termname).unwrap().as_ptr().cast(),
-            termname.len() + 1,
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyTerm,
+            None,
+            CString::new(termname).unwrap().as_bytes_with_nul(),
         );
-        proc_send(
-            PEER,
-            Msg::IdentifyFeatures as msgtype,
-            -1,
-            (&raw const feat).cast(),
-            mem::size_of_val(&feat),
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyFeatures,
+            None,
+            bytemuck::bytes_of(&feat),
         );
 
-        proc_send(
-            PEER,
-            Msg::IdentifyTtyName as msgtype,
-            -1,
-            CString::new(ttynam).unwrap().as_ptr().cast(),
-            ttynam.len() + 1,
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyTtyName,
+            None,
+            CString::new(ttynam).unwrap().as_bytes_with_nul(),
         );
-        proc_send(
-            PEER,
-            Msg::IdentifyCwd as msgtype,
-            -1,
-            CString::new(cwd).unwrap().as_ptr().cast(),
-            cwd.len() + 1,
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyCwd,
+            None,
+            CString::new(cwd).unwrap().as_bytes_with_nul(),
         );
 
         for _ in 0..ncaps {
             let p = caps.as_ref().unwrap().cast_const();
-            proc_send(
-                PEER,
-                Msg::IdentifyTermInfo as msgtype,
-                -1,
-                p.cast(),
-                CStr::from_ptr(p).to_bytes().len() + 1,
+            crate::proc::send(
+                &mut *PEER,
+                Msg::IdentifyTermInfo,
+                None,
+                CStr::from_ptr(p).to_bytes_with_nul(),
             );
             caps = caps.add(1);
         }
 
-        proc_send(
-            PEER,
-            Msg::IdentifyStdin as msgtype,
-            dup(io::stdin()).expect("dup failed").into_raw_fd(),
-            ptr::null(),
-            0,
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyStdin,
+            Some(dup(io::stdin()).expect("dup failed")),
+            &[],
         );
-        proc_send(
-            PEER,
-            Msg::IdentifyStdout as msgtype,
-            dup(io::stdout()).expect("dup failed").into_raw_fd(),
-            ptr::null(),
-            0,
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyStdout,
+            Some(dup(io::stdout()).expect("dup failed")),
+            &[],
         );
 
         let pid = Pid::this().as_raw();
-        proc_send(
-            PEER,
-            Msg::IdentifyClientPid as msgtype,
-            -1,
-            (&raw const pid).cast(),
-            mem::size_of_val(&pid),
+        crate::proc::send(
+            &mut *PEER,
+            Msg::IdentifyClientPid,
+            None,
+            bytemuck::bytes_of(&pid),
         );
 
         let mut ss = crate::tmux_sys::environ;
@@ -585,15 +566,16 @@ fn send_identify(
             if s.is_null() {
                 break;
             }
-            let sslen = CStr::from_ptr(s).to_bytes().len() + 1;
+            let s = CStr::from_ptr(s).to_bytes_with_nul();
+            let sslen = s.len();
             if sslen > MAX_IMSGSIZE as usize - mem::size_of::<imsg_hdr>() {
                 continue;
             }
-            proc_send(PEER, Msg::IdentifyEnviron as msgtype, -1, s.cast(), sslen);
+            crate::proc::send(&mut *PEER, Msg::IdentifyEnviron, None, s);
             ss = ss.add(1);
         }
 
-        proc_send(PEER, Msg::IdentifyDone as msgtype, -1, ptr::null(), 0);
+        crate::proc::send(&mut *PEER, Msg::IdentifyDone, None, &[]);
     }
 }
 
@@ -651,17 +633,17 @@ extern "C" fn signal(sig: c_int) {
                 Signal::SIGHUP => {
                     *EXIT_REASON.lock().unwrap() = Some(Exit::LostTty);
                     EXIT_VAL = 1;
-                    proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                    crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
                 }
                 Signal::SIGTERM => {
                     if !SUSPENDED {
                         *EXIT_REASON.lock().unwrap() = Some(Exit::Terminated);
                     }
                     EXIT_VAL = 1;
-                    proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                    crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
                 }
                 Signal::SIGWINCH => {
-                    proc_send(PEER, Msg::Resize as msgtype, -1, ptr::null(), 0);
+                    crate::proc::send(&mut *PEER, Msg::Resize, None, &[]);
                 }
                 Signal::SIGCONT => {
                     sigaction(
@@ -669,7 +651,7 @@ extern "C" fn signal(sig: c_int) {
                         &SigAction::new(SigHandler::SigIgn, SaFlags::SA_RESTART, SigSet::empty()),
                     )
                     .expect("sigaction failed");
-                    proc_send(PEER, Msg::WakeUp as msgtype, -1, ptr::null(), 0);
+                    crate::proc::send(&mut *PEER, Msg::WakeUp, None, &[]);
                     SUSPENDED = false;
                 }
                 _ => {}
@@ -772,7 +754,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
                 // I thought MSG_READY should be sent instead of MSG_RESIZE,
                 // but after looking at commit 88b92df8492092fbbab37a3ddd2390e0eee2cb24,
                 // I think RESIZE is the right choice.
-                proc_send(PEER, Msg::Resize as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Resize, None, &[]);
             }
         }
 
@@ -814,9 +796,9 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
             );
         }
 
-        Msg::Detach | Msg::DetachKill => unsafe {
-            proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
-        },
+        Msg::Detach | Msg::DetachKill => {
+            crate::proc::send(unsafe { &mut *PEER }, Msg::Exiting, None, &[]);
+        }
 
         Msg::Exited => unsafe {
             proc_exit(PROC);
@@ -908,7 +890,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
                         session: exit_session,
                     }
                 });
-                proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
             }
         }
 
@@ -924,7 +906,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
                 *EXEC_SHELL.lock().unwrap() = Some(OsStr::from_bytes(shell.to_bytes()).to_owned());
 
                 EXIT_TYPE.write(msg_type);
-                proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
             }
         }
 
@@ -935,7 +917,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
                 if exit_reason.is_none() {
                     *exit_reason = Some(Exit::Exited);
                 }
-                proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
             }
         }
 
@@ -955,7 +937,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
             }
 
             unsafe {
-                proc_send(PEER, Msg::Exiting as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Exiting, None, &[]);
                 *EXIT_REASON.lock().unwrap() = Some(Exit::ServerExited);
                 EXIT_VAL = 1;
             }
@@ -984,7 +966,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
 
             unsafe {
                 libc::system(data);
-                proc_send(PEER, Msg::Unlock as msgtype, -1, ptr::null(), 0);
+                crate::proc::send(&mut *PEER, Msg::Unlock, None, &[]);
             }
         }
 

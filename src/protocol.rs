@@ -7,7 +7,7 @@ pub(crate) const VERSION: i32 = 8;
 
 /// Message types.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[allow(dead_code)]
 pub(crate) enum Msg {
     Version = 12,

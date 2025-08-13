@@ -11,3 +11,11 @@ C Function | Rust Equivalent
 --- | ---
 fatalx | panic!
 log_debug | debug!
+
+- Adhere to C code's unsafe behaviors. For example, if the C code doesn't check for null pointer before dereferencing, the corresponding Rust code should also not check for null pointer before dereferencing or just call `unwrap`.
+- However, be flexible with types. Choose the appropriate type based on the context, not based on the C code. For example, if the C code uses an integer as a boolean, the corresponding Rust code should use a boolean type.
+- Translate `&` in C bit flags to Rust `bitflags` crate's `intersects` method, not `contains`.
+
+## Rust Coding Tips
+
+- Prefer equivalent types from `core` to `std` e.g., use `core::ffi::c_int` instead of `std::ffi::c_int` and `core::ptr` instead of `std::ptr`.

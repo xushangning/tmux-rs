@@ -1,12 +1,14 @@
 use core::{
-    ffi::{CStr, c_char, c_int, c_void},
-    mem::MaybeUninit,
-    ptr::NonNull,
+    ffi::{CStr, c_char, c_int, c_short, c_void},
+    mem::{self, MaybeUninit},
+    ptr::{self, NonNull},
 };
 use std::{
     ffi::{CString, OsStr},
-    mem,
-    os::unix::{ffi::OsStrExt, net::UnixStream},
+    os::{
+        fd::{IntoRawFd, OwnedFd},
+        unix::{ffi::OsStrExt, net::UnixStream},
+    },
     path::Path,
     process,
 };
@@ -17,8 +19,13 @@ use log::debug;
 use nix::{errno::Errno, unistd::ForkResult};
 
 use crate::{
-    compat::queue::tailq,
-    tmux_sys::{event_get_method, event_get_version, imsg, imsgbuf, tmuxproc, xcalloc, xstrdup},
+    compat::{imsg::IMsg, queue::tailq},
+    protocol::Msg,
+    tmux_sys::{
+        EV_READ, EV_WRITE, PROTOCOL_VERSION, event_add, event_del, event_get_method,
+        event_get_version, event_set, imsg, imsg_compose, imsg_free, imsg_get, imsgbuf,
+        imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, tmuxproc, xcalloc, xstrdup,
+    },
 };
 
 #[repr(C)]
@@ -60,6 +67,120 @@ pub struct Peer {
     arg: *mut c_void,
 
     entry: tailq::Entry<Peer>,
+}
+
+extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
+    let peer = unsafe { &mut *(arg as *mut Peer) };
+
+    unsafe {
+        if !peer.flags.contains(PeerFlag::BAD) && (events & EV_READ as i16) != 0 {
+            if imsgbuf_read(&mut peer.ibuf) != 1 {
+                peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
+                return;
+            }
+
+            loop {
+                let mut imsg = MaybeUninit::<IMsg>::uninit();
+                let n = imsg_get(&mut peer.ibuf, imsg.as_mut_ptr());
+                if n == -1 {
+                    peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
+                    return;
+                }
+                if n == 0 {
+                    break;
+                }
+
+                let imsg = imsg.assume_init_mut();
+                debug!("peer {peer:p} message {}", imsg.hdr.type_);
+
+                if !peer_check_version(peer, imsg) {
+                    imsg_free(imsg);
+                    break;
+                }
+
+                peer.dispatchcb.unwrap()(imsg, peer.arg);
+                imsg_free(imsg);
+            }
+        }
+
+        if events & EV_WRITE as i16 != 0 {
+            if imsgbuf_write(&mut peer.ibuf) == -1 {
+                peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
+                return;
+            }
+        }
+
+        if peer.flags.intersects(PeerFlag::BAD) && imsgbuf_queuelen(&mut peer.ibuf) == 0 {
+            peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
+            return;
+        }
+    }
+
+    update_event(peer);
+}
+
+fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
+    let version = imsg.hdr.peerid & 0xff;
+    if imsg.hdr.type_ != unsafe { mem::transmute(Msg::Version) } && version != PROTOCOL_VERSION {
+        debug!("peer {:p} bad version {}", peer, version);
+
+        send(peer, Msg::Version, None, &[]);
+        peer.flags |= PeerFlag::BAD;
+
+        return false;
+    }
+    true
+}
+
+fn update_event(peer: &mut Peer) {
+    unsafe {
+        event_del(&raw mut peer.event);
+
+        let mut events = EV_READ as c_short;
+        if imsgbuf_queuelen(&raw mut peer.ibuf) > 0 {
+            events |= EV_WRITE as c_short;
+        }
+        event_set(
+            &raw mut peer.event,
+            peer.ibuf.fd,
+            events,
+            Some(event_cb),
+            peer as *mut _ as *mut c_void,
+        );
+
+        event_add(&raw mut peer.event, ptr::null_mut());
+    }
+}
+
+pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u8]) -> Option<()> {
+    if peer.flags.intersects(PeerFlag::BAD) {
+        return None;
+    }
+    debug!(
+        "sending message {msg_type:?} to peer {peer:p} ({} bytes)",
+        buf.len()
+    );
+
+    let retval = unsafe {
+        imsg_compose(
+            &mut peer.ibuf,
+            mem::transmute(msg_type),
+            crate::protocol::VERSION.try_into().unwrap(),
+            -1,
+            fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1),
+            if buf.is_empty() {
+                ptr::null_mut()
+            } else {
+                buf.as_ptr().cast_mut().cast()
+            },
+            buf.len(),
+        )
+    };
+    if retval != 1 {
+        return None;
+    }
+    update_event(peer);
+    Some(())
 }
 
 pub(crate) fn start(name: &str) -> NonNull<Proc> {

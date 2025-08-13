@@ -19,7 +19,7 @@ pub use tmux::get_shell;
 use core::ffi::{CStr, c_char};
 
 use bitflags::bitflags;
-use bytemuck::AnyBitPattern;
+use bytemuck::{AnyBitPattern, NoUninit};
 
 pub const TMUX_CONF: &str =
     "/etc/tmux.conf:~/.tmux.conf:$XDG_CONFIG_HOME/tmux/tmux.conf:~/.config/tmux/tmux.conf";
@@ -34,7 +34,7 @@ pub enum ModeKey {
 
 bitflags! {
     #[repr(C)]
-    #[derive(Clone, Copy, Debug, AnyBitPattern)]
+    #[derive(Clone, Copy, Debug, AnyBitPattern, NoUninit)]
     pub struct ClientFlag: u64 {
         const LOGIN = 1 << 1;
         const NO_START_SERVER = 1 << 12;

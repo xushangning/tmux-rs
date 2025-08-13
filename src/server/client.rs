@@ -26,14 +26,13 @@ use crate::{
         cmd_retval_CMD_RETURN_NORMAL, cmd_unpack_argv, cmdq_append, cmdq_get_callback1,
         cmdq_get_command, cmdq_get_error, control_ready, control_start, environ_put,
         file_read_data, file_read_done, file_write_ready, global_options, global_s_options,
-        imsg_get_fd, key_bindings_get_table, key_event, msgtype_MSG_EXITED, notify_client,
-        options_get_command, options_get_number, options_get_string, proc_add_peer, proc_kill_peer,
-        proc_send, recalculate_size, recalculate_sizes, server_client_clear_overlay,
-        server_client_handle_key, server_client_lost, server_client_set_key_table,
-        server_client_set_session, server_redraw_client, server_status_client,
-        session_update_activity, start_cfg, status_init, tty_close, tty_get_features, tty_init,
-        tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty, xasprintf, xcalloc,
-        xreallocarray, xstrdup,
+        imsg_get_fd, key_bindings_get_table, key_event, notify_client, options_get_command,
+        options_get_number, options_get_string, proc_add_peer, proc_kill_peer, recalculate_size,
+        recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
+        server_client_lost, server_client_set_key_table, server_client_set_session,
+        server_redraw_client, server_status_client, session_update_activity, start_cfg,
+        status_init, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
+        tty_send_requests, tty_start_tty, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     util,
 };
@@ -232,7 +231,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 server_client_set_session(c, ptr::null_mut());
                 recalculate_sizes();
                 tty_close(&raw mut c.tty);
-                proc_send(c.peer, msgtype_MSG_EXITED, -1, ptr::null_mut(), 0);
+                crate::proc::send(&mut *c.peer, Msg::Exited, None, &[]);
             }
         }
         WakeUp | Unlock => {
@@ -614,12 +613,11 @@ fn dispatch_shell(c: &mut crate::tmux_sys::client) {
         if checkshell(shell) == 0 {
             shell = _PATH_BSHELL.as_ptr();
         }
-        proc_send(
-            c.peer,
-            mem::transmute(Msg::Shell),
-            -1,
-            shell.cast(),
-            libc::strlen(shell) + 1,
+        crate::proc::send(
+            &mut *c.peer,
+            Msg::Shell,
+            None,
+            CStr::from_ptr(shell).to_bytes_with_nul(),
         );
 
         proc_kill_peer(c.peer);
