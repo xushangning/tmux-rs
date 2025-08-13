@@ -1,15 +1,16 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
-    mem::{self, MaybeUninit},
-    ptr::{self, NonNull},
+    mem::MaybeUninit,
+    ptr::NonNull,
 };
 use std::os::fd::{IntoRawFd, OwnedFd};
 
+use bytemuck::NoUninit;
 use nix::unistd::Pid;
 
 use crate::{
     compat::queue::tailq,
-    tmux_sys::{ibuf_add, ibuf_dynamic, ibuf_fd_set, ibuf_free, imsg_close, imsgbuf},
+    tmux_sys::{ibuf_dynamic, ibuf_fd_set, ibuf_free, ibuf_reserve, imsg_close, imsgbuf},
 };
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
@@ -25,7 +26,26 @@ pub struct IBuf {
     fd: c_int,
 }
 
+impl IBuf {
+    pub fn add(&mut self, data: &[u8]) -> nix::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        let Some(b) = NonNull::new(unsafe { ibuf_reserve(self, data.len()) }) else {
+            return Err(nix::Error::last());
+        };
+
+        unsafe {
+            data.as_ptr()
+                .copy_to_nonoverlapping(b.as_ptr().cast(), data.len());
+        }
+        Ok(())
+    }
+}
+
 #[repr(C)]
+#[derive(Clone, Copy, NoUninit)]
 pub struct Hdr {
     pub type_: u32,
     pub len: u32,
@@ -48,22 +68,12 @@ pub(crate) fn compose(
     fd: Option<OwnedFd>,
     data: &[u8],
 ) -> nix::Result<()> {
-    let wbuf = create(imsg_buf, type_, id, pid, data.len())?;
+    let mut wbuf = create(imsg_buf, type_, id, pid, data.len())?;
 
     unsafe {
-        if ibuf_add(
-            wbuf.as_ptr(),
-            if data.is_empty() {
-                ptr::null_mut()
-            } else {
-                data.as_ptr().cast()
-            },
-            data.len(),
-        ) == -1
-        {
-            ibuf_free(wbuf.as_ptr());
-            return Err(nix::Error::last());
-        }
+        wbuf.as_mut()
+            .add(data)
+            .inspect_err(|_| ibuf_free(wbuf.as_ptr()))?;
 
         ibuf_fd_set(wbuf.as_ptr(), fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1));
         imsg_close(imsg_buf, wbuf.as_ptr());
@@ -95,21 +105,17 @@ pub(crate) fn create(
             })
             .unwrap_or(-1) as u32,
     };
-    let Some(wbuf) = NonNull::new(unsafe { ibuf_dynamic(data_len, imsg_buf.maxsize as usize) })
+    let Some(mut wbuf) = NonNull::new(unsafe { ibuf_dynamic(data_len, imsg_buf.maxsize as usize) })
     else {
         return Err(nix::Error::last());
     };
     unsafe {
-        if ibuf_add(
-            wbuf.as_ptr(),
-            (&raw const hdr).cast(),
-            mem::size_of_val_raw(&raw const hdr),
-        ) == -1
-        {
-            ibuf_free(wbuf.as_ptr());
-            return Err(nix::Error::last());
+        match wbuf.as_mut().add(bytemuck::bytes_of(&hdr)) {
+            Ok(_) => Ok(wbuf),
+            Err(err) => {
+                ibuf_free(wbuf.as_ptr());
+                Err(err)
+            }
         }
     }
-
-    Ok(wbuf)
 }
