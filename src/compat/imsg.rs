@@ -1,6 +1,6 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
-    mem::MaybeUninit,
+    mem::{self, MaybeUninit},
     ptr::NonNull,
 };
 use std::os::fd::{IntoRawFd, OwnedFd};
@@ -10,7 +10,7 @@ use nix::unistd::Pid;
 
 use crate::{
     compat::queue::tailq,
-    tmux_sys::{ibuf_dynamic, ibuf_fd_set, ibuf_free, imsg_close, imsgbuf},
+    tmux_sys::{ibuf_fd_set, ibuf_free, imsg_close, imsgbuf},
 };
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
@@ -28,6 +28,32 @@ pub struct IBuf {
 
 impl IBuf {
     const FD_MARK_ON_STACK: c_int = -2;
+
+    pub fn dynamic(len: usize, max: usize) -> nix::Result<NonNull<Self>> {
+        if max == 0 || max < len {
+            return Err(nix::Error::EINVAL);
+        }
+
+        let Some(mut buf) =
+            NonNull::new(unsafe { libc::calloc(1, mem::size_of::<Self>()) } as *mut Self)
+        else {
+            return Err(nix::Error::last());
+        };
+        let buf_ref = unsafe { buf.as_mut() };
+        if len > 0 {
+            buf_ref.buf = unsafe {
+                NonNull::new(libc::calloc(len, 1) as *mut u8).ok_or_else(|| {
+                    libc::free(buf.as_ptr().cast());
+                    nix::Error::last()
+                })
+            }?;
+        }
+        buf_ref.size = len;
+        buf_ref.max = max;
+        buf_ref.fd = -1;
+
+        Ok(buf)
+    }
 
     pub fn reserve(&mut self, len: usize) -> nix::Result<NonNull<u8>> {
         if len > usize::MAX - self.wpos {
@@ -138,10 +164,7 @@ pub(crate) fn create(
             })
             .unwrap_or(-1) as u32,
     };
-    let Some(mut wbuf) = NonNull::new(unsafe { ibuf_dynamic(data_len, imsg_buf.maxsize as usize) })
-    else {
-        return Err(nix::Error::last());
-    };
+    let mut wbuf = IBuf::dynamic(data_len, imsg_buf.maxsize as usize)?;
     unsafe {
         match wbuf.as_mut().add(bytemuck::bytes_of(&hdr)) {
             Ok(_) => Ok(wbuf),
