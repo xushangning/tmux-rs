@@ -168,7 +168,8 @@ pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u
         None,
         fd,
         buf,
-    )?;
+    )
+    .ok()?;
     update_event(peer);
     Some(())
 }
