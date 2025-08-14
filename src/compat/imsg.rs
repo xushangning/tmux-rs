@@ -1,6 +1,6 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
-    mem::{self, ManuallyDrop, MaybeUninit},
+    mem::{self, ManuallyDrop, MaybeUninit, offset_of},
     ptr::NonNull,
 };
 use std::{
@@ -13,10 +13,12 @@ use nix::unistd::Pid;
 
 use crate::{
     compat::queue::tailq,
-    tmux_sys::{ibuf_fd_set, imsg_close, imsgbuf},
+    tmux_sys::{ibuf_fd_set, imsgbuf},
 };
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
+
+const FD_MARK: usize = 0x80000000;
 
 #[repr(transparent)]
 pub struct OwnedIBuf(NonNull<IBuf>);
@@ -184,8 +186,8 @@ pub(crate) fn compose(
 
     unsafe {
         ibuf_fd_set(wbuf.0.as_ptr(), fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1));
-        imsg_close(imsg_buf, OwnedIBuf::into_raw(wbuf).as_ptr());
     }
+    close(imsg_buf, wbuf);
 
     Ok(())
 }
@@ -215,4 +217,19 @@ pub(crate) fn create(
     };
     let mut wbuf = IBuf::dynamic(data_len, imsg_buf.maxsize as usize)?;
     wbuf.add(bytemuck::bytes_of(&hdr)).map(|_| wbuf)
+}
+
+pub(crate) fn close(imsg_buf: &mut imsgbuf, msg: OwnedIBuf) {
+    let mut len = unsafe { crate::tmux_sys::ibuf_size(msg.0.as_ptr()) };
+    if unsafe { crate::tmux_sys::ibuf_fd_avail(msg.0.as_ptr()) } != 0 {
+        len |= FD_MARK;
+    }
+    unsafe {
+        crate::tmux_sys::ibuf_set_h32(
+            msg.0.as_ptr(),
+            offset_of!(Hdr, len),
+            len.try_into().unwrap(),
+        );
+        crate::tmux_sys::ibuf_close(imsg_buf.w, OwnedIBuf::into_raw(msg).as_ptr());
+    }
 }
