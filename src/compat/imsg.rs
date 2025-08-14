@@ -133,6 +133,33 @@ impl IBuf {
         Ok(())
     }
 
+    pub fn seek(&self, pos: usize, len: usize) -> nix::Result<NonNull<u8>> {
+        // only allow seeking between rpos and wpos
+        if self.size < pos || usize::MAX - pos < len || self.size < pos + len {
+            Err(nix::Error::ERANGE)
+        } else {
+            Ok(unsafe { self.buf.add(self.rpos + pos) })
+        }
+    }
+
+    pub fn set(&mut self, pos: usize, data: &[u8]) -> nix::Result<()> {
+        let b = self.seek(pos, data.len())?;
+
+        if !data.is_empty() {
+            unsafe {
+                b.as_ptr()
+                    .copy_from_nonoverlapping(data.as_ptr(), data.len());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_h32(&mut self, pos: usize, value: u64) -> nix::Result<()> {
+        let v: u32 = value.try_into().map_err(|_| nix::Error::EINVAL)?;
+
+        self.set(pos, bytemuck::bytes_of(&v))
+    }
+
     pub fn size(&self) -> usize {
         self.wpos - self.rpos
     }
@@ -238,17 +265,14 @@ pub(crate) fn create(
     wbuf.add(bytemuck::bytes_of(&hdr)).map(|_| wbuf)
 }
 
-pub(crate) fn close(imsg_buf: &mut imsgbuf, msg: OwnedIBuf) {
+pub(crate) fn close(imsg_buf: &mut imsgbuf, mut msg: OwnedIBuf) {
     let mut len = msg.size();
     if msg.fd_avail() {
         len |= FD_MARK;
     }
+    msg.set_h32(offset_of!(Hdr, len), len.try_into().unwrap())
+        .unwrap();
     unsafe {
-        crate::tmux_sys::ibuf_set_h32(
-            msg.0.as_ptr(),
-            offset_of!(Hdr, len),
-            len.try_into().unwrap(),
-        );
         crate::tmux_sys::ibuf_close(imsg_buf.w, OwnedIBuf::into_raw(msg).as_ptr());
     }
 }
