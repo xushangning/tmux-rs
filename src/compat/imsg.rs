@@ -11,10 +11,7 @@ use std::{
 use bytemuck::NoUninit;
 use nix::unistd::Pid;
 
-use crate::{
-    compat::queue::tailq,
-    tmux_sys::{ibuf_fd_set, imsgbuf},
-};
+use crate::{compat::queue::tailq, tmux_sys::imsgbuf};
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
 
@@ -135,6 +132,22 @@ impl IBuf {
         }
         Ok(())
     }
+
+    pub fn fd_set(&mut self, fd: Option<OwnedFd>) {
+        // if buf lives on the stack abort before causing more harm
+        if self.fd == Self::FD_MARK_ON_STACK {
+            panic!();
+        }
+        if self.fd >= 0 {
+            unsafe {
+                libc::close(self.fd);
+            }
+        }
+        self.fd = match fd {
+            Some(fd) => fd.into_raw_fd(),
+            None => -1,
+        };
+    }
 }
 
 impl Drop for IBuf {
@@ -184,9 +197,7 @@ pub(crate) fn compose(
 
     wbuf.add(data)?;
 
-    unsafe {
-        ibuf_fd_set(wbuf.0.as_ptr(), fd.map(|fd| fd.into_raw_fd()).unwrap_or(-1));
-    }
+    wbuf.fd_set(fd);
     close(imsg_buf, wbuf);
 
     Ok(())
