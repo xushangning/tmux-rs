@@ -133,6 +133,10 @@ impl IBuf {
         Ok(())
     }
 
+    pub fn size(&self) -> usize {
+        self.wpos - self.rpos
+    }
+
     pub fn fd_avail(&self) -> bool {
         self.fd >= 0
     }
@@ -235,7 +239,7 @@ pub(crate) fn create(
 }
 
 pub(crate) fn close(imsg_buf: &mut imsgbuf, msg: OwnedIBuf) {
-    let mut len = unsafe { crate::tmux_sys::ibuf_size(msg.0.as_ptr()) };
+    let mut len = msg.size();
     if msg.fd_avail() {
         len |= FD_MARK;
     }
