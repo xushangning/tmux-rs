@@ -133,6 +133,10 @@ impl IBuf {
         Ok(())
     }
 
+    pub fn fd_avail(&self) -> bool {
+        self.fd >= 0
+    }
+
     pub fn fd_set(&mut self, fd: Option<OwnedFd>) {
         // if buf lives on the stack abort before causing more harm
         if self.fd == Self::FD_MARK_ON_STACK {
@@ -232,7 +236,7 @@ pub(crate) fn create(
 
 pub(crate) fn close(imsg_buf: &mut imsgbuf, msg: OwnedIBuf) {
     let mut len = unsafe { crate::tmux_sys::ibuf_size(msg.0.as_ptr()) };
-    if unsafe { crate::tmux_sys::ibuf_fd_avail(msg.0.as_ptr()) } != 0 {
+    if msg.fd_avail() {
         len |= FD_MARK;
     }
     unsafe {
