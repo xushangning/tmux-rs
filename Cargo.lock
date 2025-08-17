@@ -708,7 +708,6 @@ dependencies = [
  "libc",
  "log",
  "nix",
- "scopeguard",
  "spdlog-rs",
  "thiserror 2.0.12",
 ]

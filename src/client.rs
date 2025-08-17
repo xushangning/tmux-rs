@@ -41,13 +41,13 @@ use crate::{
     protocol::{Msg, MsgCommand},
     tmux::{setblocking, shell_argv0},
     tmux_sys::{
-        CMD_STARTSERVER, MAX_IMSGSIZE, args_free_values, args_from_vector, client_files,
-        cmd_list_any_have, cmd_list_free, cmd_parse_from_arguments,
-        cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer, event_base, file_read_cancel,
-        file_read_open, file_write_close, file_write_data, file_write_left, file_write_open,
-        global_environ, global_options, global_s_options, global_w_options, imsg_hdr, options_free,
-        proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop, proc_set_signals,
-        tmuxpeer, tmuxproc, tty_term_free_list, tty_term_read_list,
+        CMD_STARTSERVER, MAX_IMSGSIZE, client_files, cmd_list_any_have, cmd_list_free,
+        cmd_parse_from_arguments, cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer,
+        event_base, file_read_cancel, file_read_open, file_write_close, file_write_data,
+        file_write_left, file_write_open, global_environ, global_options, global_s_options,
+        global_w_options, imsg_hdr, options_free, proc_add_peer, proc_clear_signals, proc_exit,
+        proc_flush_peer, proc_loop, proc_set_signals, tmuxpeer, tmuxproc, tty_term_free_list,
+        tty_term_read_list,
     },
 };
 
@@ -195,13 +195,6 @@ fn exit() {
 }
 
 pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, feat: c_int) -> i32 {
-    let mut argv = args
-        .iter()
-        .map(|s| CString::new(s.as_bytes()).unwrap().into_raw())
-        .collect::<Vec<_>>();
-    let argc = argv.len();
-    argv.push(ptr::null_mut());
-
     // Set up the initial command.
     let msg: Msg;
     if unsafe { !crate::tmux_sys::shell_command.is_null() } {
@@ -216,11 +209,15 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         // It's annoying parsing the command string twice (in client
         // and later in server) but it is necessary to get the start
         // server flag.
+        let mut values = crate::args::from_vector(args.iter());
         unsafe {
-            let values = args_from_vector(argc.try_into().unwrap(), argv.as_mut_ptr());
-            let pr = cmd_parse_from_arguments(values, argc.try_into().unwrap(), ptr::null_mut())
-                .as_ref()
-                .unwrap();
+            let pr = cmd_parse_from_arguments(
+                values.as_mut_ptr(),
+                args.len().try_into().unwrap(),
+                ptr::null_mut(),
+            )
+            .as_ref()
+            .unwrap();
             match pr.status {
                 #[allow(non_upper_case_globals)]
                 cmd_parse_status_CMD_PARSE_SUCCESS => {
@@ -231,8 +228,6 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
                 }
                 _ => libc::free(pr.error as *mut c_void),
             };
-            args_free_values(values, argc.try_into().unwrap());
-            libc::free(values as *mut c_void);
         }
     }
 
@@ -369,7 +364,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
     match msg {
         Msg::Command => {
             let data: MsgCommand = MsgCommand {
-                argc: argc.try_into().unwrap(),
+                argc: args.len().try_into().unwrap(),
             };
             // How big is the command?
             let size: usize = args.iter().map(|arg| arg.len() + 1).sum();

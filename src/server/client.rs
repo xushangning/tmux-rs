@@ -8,7 +8,6 @@ use std::os::{fd::IntoRawFd, unix::net::UnixStream};
 use libc::pid_t;
 use log::debug;
 use nix::errno::Errno;
-use scopeguard::defer;
 
 use crate::{
     compat::{
@@ -20,10 +19,9 @@ use crate::{
     tmux_sys::{
         _PATH_BSHELL, CLIENT_CONTROL, CLIENT_DEAD, CLIENT_DOUBLECLICK, CLIENT_EXIT, CLIENT_FOCUSED,
         CLIENT_IDENTIFIED, CLIENT_READONLY, CLIENT_REPEAT, CLIENT_SUSPENDED, CLIENT_TERMINAL,
-        CLIENT_TRIPLECLICK, CMD_READONLY, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, args_free_values,
-        args_from_vector, cfg_finished, checkshell, client_file, clients, cmd_free_argv,
-        cmd_list_all_have, cmd_list_copy, cmd_list_free, cmd_parse_from_arguments,
-        cmd_retval_CMD_RETURN_NORMAL, cmd_unpack_argv, cmdq_append, cmdq_get_callback1,
+        CLIENT_TRIPLECLICK, CMD_READONLY, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
+        checkshell, client_file, clients, cmd_list_all_have, cmd_list_copy, cmd_list_free,
+        cmd_parse_from_arguments, cmd_retval_CMD_RETURN_NORMAL, cmdq_append, cmdq_get_callback1,
         cmdq_get_command, cmdq_get_error, control_ready, control_start, environ_put,
         file_read_data, file_read_done, file_write_ready, global_options, global_s_options,
         imsg_get_fd, key_bindings_get_table, key_event, notify_client, options_get_command,
@@ -334,7 +332,6 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     }
 
     let argc = data.argc;
-    let mut argv: *mut *mut i8 = ptr::null_mut();
     let error = |c: &mut crate::tmux_sys::client, cause: *mut c_char| {
         unsafe {
             cmdq_append(c, cmdq_get_error(cause));
@@ -343,15 +340,12 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
 
         c.flags |= CLIENT_EXIT as u64;
     };
-    if unsafe { cmd_unpack_argv(buf, len, argc, &raw mut argv) } != 0 {
+    let Some(args) =
+        crate::cmd::unpack_argv(unsafe { core::slice::from_raw_parts(buf, len) }, argc)
+    else {
         error(c, unsafe { xstrdup(c"command too long".as_ptr()) });
         return;
-    }
-    defer! {
-        unsafe {
-            cmd_free_argv(argc, argv);
-        }
-    }
+    };
 
     let cmdlist = if argc == 0 {
         unsafe {
@@ -362,17 +356,15 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
             )
         }
     } else {
-        let values = unsafe { args_from_vector(argc, argv) };
-        defer! {
-            unsafe {
-                args_free_values(values, argc.try_into().unwrap());
-                libc::free(values.cast());
-            }
-        }
+        let mut values = crate::args::from_vector(args.iter());
         let pr = unsafe {
-            cmd_parse_from_arguments(values, argc.try_into().unwrap(), ptr::null_mut())
-                .as_ref()
-                .unwrap()
+            cmd_parse_from_arguments(
+                values.as_mut_ptr(),
+                argc.try_into().unwrap(),
+                ptr::null_mut(),
+            )
+            .as_ref()
+            .unwrap()
         };
 
         match pr.status {

@@ -1,3 +1,4 @@
+use core::ffi::{CStr, c_char, c_int};
 use std::io::Write;
 
 use log::debug;
@@ -23,4 +24,25 @@ pub(crate) fn pack_argv(args: &[String], mut buf: &mut [u8]) -> Option<()> {
     }
 
     Some(())
+}
+
+/// Unpack an argument vector from a packed buffer.
+pub(crate) fn unpack_argv(mut buf: &[c_char], argc: c_int) -> Option<Vec<String>> {
+    if argc == 0 {
+        return Some(Vec::new());
+    }
+
+    let mut args = Vec::with_capacity(argc.try_into().unwrap());
+    for _ in 0..argc {
+        if buf.is_empty() {
+            return None;
+        }
+
+        let arg = unsafe { CStr::from_ptr(buf.as_ptr()) };
+        args.push(arg.to_str().unwrap().to_owned());
+        buf = &buf[arg.to_bytes_with_nul().len()..];
+    }
+    log_argv(args.iter(), "tmux_rs::cmd::unpack_argv");
+
+    Some(args)
 }

@@ -1,6 +1,7 @@
 #![feature(path_add_extension)]
 #![feature(layout_for_ptr)]
 
+pub(crate) mod args;
 pub mod client;
 pub(crate) mod cmd;
 pub mod compat;
