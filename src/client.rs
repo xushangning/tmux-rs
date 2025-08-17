@@ -42,7 +42,7 @@ use crate::{
     tmux::{setblocking, shell_argv0},
     tmux_sys::{
         CMD_STARTSERVER, MAX_IMSGSIZE, args_free_values, args_from_vector, client_files,
-        cmd_list_any_have, cmd_list_free, cmd_pack_argv, cmd_parse_from_arguments,
+        cmd_list_any_have, cmd_list_free, cmd_parse_from_arguments,
         cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer, event_base, file_read_cancel,
         file_read_open, file_write_close, file_write_data, file_write_left, file_write_open,
         global_environ, global_options, global_s_options, global_w_options, imsg_hdr, options_free,
@@ -384,15 +384,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
             data_buffer.resize(total_size, 0);
 
             // Prepare command for server.
-            if unsafe {
-                cmd_pack_argv(
-                    argc.try_into().unwrap(),
-                    argv.as_mut_ptr(),
-                    data_buffer.as_mut_ptr().add(mem::size_of_val(&data)).cast(),
-                    size,
-                )
-            } != 0
-            {
+            if crate::cmd::pack_argv(args, &mut data_buffer[mem::size_of_val(&data)..]).is_none() {
                 eprintln!("command too long");
                 return 1;
             }

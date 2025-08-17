@@ -2,6 +2,7 @@
 #![feature(layout_for_ptr)]
 
 pub mod client;
+pub(crate) mod cmd;
 pub mod compat;
 mod libevent;
 pub mod log;
