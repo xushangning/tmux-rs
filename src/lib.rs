@@ -5,6 +5,7 @@ pub(crate) mod args;
 pub mod client;
 pub(crate) mod cmd;
 pub mod compat;
+pub(crate) mod file;
 mod libevent;
 pub mod log;
 pub mod osdep;

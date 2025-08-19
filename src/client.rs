@@ -43,11 +43,10 @@ use crate::{
     tmux_sys::{
         CMD_STARTSERVER, MAX_IMSGSIZE, client_files, cmd_list_any_have, cmd_list_free,
         cmd_parse_from_arguments, cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer,
-        event_base, file_read_cancel, file_read_open, file_write_close, file_write_data,
-        file_write_left, file_write_open, global_environ, global_options, global_s_options,
-        global_w_options, imsg_hdr, options_free, proc_add_peer, proc_clear_signals, proc_exit,
-        proc_flush_peer, proc_loop, proc_set_signals, tmuxpeer, tmuxproc, tty_term_free_list,
-        tty_term_read_list,
+        event_base, file_read_cancel, file_read_open, file_write_close, file_write_left,
+        file_write_open, global_environ, global_options, global_s_options, global_w_options,
+        imsg_hdr, options_free, proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer,
+        proc_loop, proc_set_signals, tmuxpeer, tmuxproc, tty_term_free_list, tty_term_read_list,
     },
 };
 
@@ -825,9 +824,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
             );
         },
 
-        Msg::Write => unsafe {
-            file_write_data(&raw mut FILES, imsg);
-        },
+        Msg::Write => crate::file::write_data(unsafe { &mut FILES }, imsg),
 
         Msg::WriteClose => unsafe {
             file_write_close(&raw mut FILES, imsg);
