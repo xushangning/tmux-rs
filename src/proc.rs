@@ -1,6 +1,7 @@
 use core::{
     ffi::{CStr, c_char, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
+    pin::Pin,
     ptr::{self, NonNull},
 };
 use std::{
@@ -214,7 +215,7 @@ pub(crate) fn start(name: &str) -> NonNull<Proc> {
         let mut tp: NonNull<tmuxproc> =
             NonNull::new_unchecked(xcalloc(1, mem::size_of::<tmuxproc>()).cast());
         tp.as_mut().name = xstrdup(CString::new(name).unwrap().as_ptr());
-        tailq::Head::new(&mut tp.as_mut().peers);
+        tailq::Head::new(Pin::new_unchecked(&mut tp.as_mut().peers));
         tp
     }
 }

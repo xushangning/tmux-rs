@@ -1,32 +1,38 @@
 pub mod tailq {
     use core::{
+        marker::PhantomPinned,
         mem::MaybeUninit,
+        pin::Pin,
         ptr::{self, NonNull},
     };
 
-    // tailq relies on Head being layout compatible with Entry to cast it to Entry,
-    // so we use the new type pattern here.
+    // In the original tailq source code, tailq head is defined as a separate
+    // struct from tailq entry. However, tailq relies on head being layout
+    // compatible with entry to cast it to entry, so we use the new type
+    // pattern here.
     #[repr(transparent)]
-    pub struct Head<T, const OFFSET: usize>(Entry<T>);
+    pub struct Head<T, const OFFSET: usize>(Entry<T>, PhantomPinned);
 
     impl<T, const OFFSET: usize> Head<T, OFFSET> {
-        // new() must not be implemented by returning a Head struct. Doing so
-        // will incur a move and leave Head.last points to the old location
-        // before the move.
-        pub fn new(uninit: &mut MaybeUninit<Self>) -> &mut Self {
+        pub fn new(uninit: Pin<&mut MaybeUninit<Self>>) -> Pin<&mut Self> {
             unsafe {
-                Self::init(uninit.as_mut_ptr());
-                uninit.assume_init_mut()
+                uninit.map_unchecked_mut(|uninit| {
+                    Self::init(uninit.as_mut_ptr());
+                    uninit.assume_init_mut()
+                })
             }
         }
 
         pub unsafe fn init(out: *mut Self) {
             unsafe {
                 let last = NonNull::from(&mut (*out).0);
-                out.write(Self(Entry::<T> {
-                    next: ptr::null_mut(),
-                    prev: last,
-                }));
+                out.write(Self(
+                    Entry {
+                        next: ptr::null_mut(),
+                        prev: last,
+                    },
+                    PhantomPinned,
+                ));
             }
         }
 
@@ -40,14 +46,15 @@ pub mod tailq {
             self.0.next.is_null()
         }
 
-        pub fn push_back(&mut self, elt: NonNull<T>) {
+        pub fn push_back(self: Pin<&mut Self>, elt: NonNull<T>) {
             let mut entry_ptr = unsafe { Entry::new::<OFFSET>(elt) };
             let entry = unsafe { entry_ptr.as_mut() };
             entry.next = ptr::null_mut();
             entry.prev = self.0.prev;
             unsafe {
-                self.0.prev.as_mut().next = elt.as_ptr();
-                self.0.prev = entry_ptr;
+                let pinned_self = self.get_unchecked_mut();
+                pinned_self.0.prev.as_mut().next = elt.as_ptr();
+                pinned_self.0.prev = entry_ptr;
             }
         }
 

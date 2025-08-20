@@ -7,6 +7,7 @@ pub(crate) mod client;
 use core::{
     ffi::{CStr, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
+    pin::Pin,
     ptr,
 };
 use std::{
@@ -173,10 +174,10 @@ pub(crate) fn start(
         utf8_update_width_cache();
         crate::tmux_sys::windows = Default::default();
         crate::tmux_sys::all_window_panes = Default::default();
-        tailq::Head::new(&mut crate::tmux_sys::clients);
+        tailq::Head::new(Pin::new_unchecked(&mut crate::tmux_sys::clients));
         crate::tmux_sys::sessions = Default::default();
         key_bindings_init();
-        tailq::Head::new(&mut crate::tmux_sys::message_log);
+        tailq::Head::new(Pin::new_unchecked(&mut crate::tmux_sys::message_log));
         libc::gettimeofday(&raw mut crate::tmux_sys::start_time, ptr::null_mut());
     }
 

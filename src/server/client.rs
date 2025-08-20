@@ -1,6 +1,7 @@
 use core::{
     ffi::{CStr, c_char, c_int, c_long, c_short, c_void},
     mem,
+    pin::Pin,
     ptr::{self, NonNull},
 };
 use std::os::{fd::IntoRawFd, unix::net::UnixStream};
@@ -99,7 +100,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<crate::tmux_sys::client> {
     }
 
     unsafe {
-        crate::tmux_sys::clients.assume_init_mut().push_back(ret);
+        Pin::new_unchecked(crate::tmux_sys::clients.assume_init_mut()).push_back(ret);
     }
     debug!("new client {:?}", ret.as_ptr());
     ret
