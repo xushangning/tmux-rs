@@ -303,9 +303,7 @@ fn send_exit() {
         cmd_wait_for_flush();
     }
 
-    let mut iter = unsafe { crate::tmux_sys::clients.assume_init_ref().iter() }.peekable();
-    while let Some(mut c_ptr) = iter.next() {
-        iter.peek();
+    for mut c_ptr in unsafe { crate::tmux_sys::clients.assume_init_ref() } {
         let c = unsafe { c_ptr.as_mut() };
         if c.flags & CLIENT_SUSPENDED as u64 != 0 {
             unsafe {
@@ -499,9 +497,7 @@ fn child_signal() {
 /// Handle exited children.
 fn child_exited(pid: Pid, status: c_int) {
     unsafe {
-        let mut iter = crate::tmux_sys::windows.iter().peekable();
-        while let Some(w) = iter.next() {
-            iter.peek();
+        for w in &crate::tmux_sys::windows {
             for mut wp_ptr in w.as_ref().panes.assume_init_ref() {
                 let wp = wp_ptr.as_mut();
                 if wp.pid == pid.as_raw() {
