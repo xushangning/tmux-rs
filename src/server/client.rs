@@ -23,15 +23,15 @@ use crate::{
         CLIENT_TRIPLECLICK, CMD_READONLY, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
         checkshell, client_file, clients, cmd_list_all_have, cmd_list_copy, cmd_list_free,
         cmd_parse_from_arguments, cmd_retval_CMD_RETURN_NORMAL, cmdq_append, cmdq_get_callback1,
-        cmdq_get_command, cmdq_get_error, control_ready, control_start, environ_put,
-        file_read_data, file_read_done, file_write_ready, global_options, global_s_options,
-        imsg_get_fd, key_bindings_get_table, key_event, notify_client, options_get_command,
-        options_get_number, options_get_string, proc_add_peer, proc_kill_peer, recalculate_size,
-        recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
-        server_client_lost, server_client_set_key_table, server_client_set_session,
-        server_redraw_client, server_status_client, session_update_activity, start_cfg,
-        status_init, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
-        tty_send_requests, tty_start_tty, xasprintf, xcalloc, xreallocarray, xstrdup,
+        cmdq_get_command, control_ready, control_start, environ_put, file_read_data,
+        file_read_done, file_write_ready, global_options, global_s_options, imsg_get_fd,
+        key_bindings_get_table, key_event, notify_client, options_get_command, options_get_number,
+        options_get_string, proc_add_peer, proc_kill_peer, recalculate_size, recalculate_sizes,
+        server_client_clear_overlay, server_client_handle_key, server_client_lost,
+        server_client_set_key_table, server_client_set_session, server_redraw_client,
+        server_status_client, session_update_activity, start_cfg, status_init, tty_close,
+        tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
+        tty_start_tty, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     util,
 };
@@ -333,10 +333,9 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     }
 
     let argc = data.argc;
-    let error = |c: &mut crate::tmux_sys::client, cause: *mut c_char| {
+    let error = |c: &mut crate::tmux_sys::client, cause: &str| {
         unsafe {
-            cmdq_append(c, cmdq_get_error(cause));
-            libc::free(cause.cast());
+            cmdq_append(c, crate::cmd::queue::get_error(cause));
         }
 
         c.flags |= CLIENT_EXIT as u64;
@@ -344,7 +343,7 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     let Some(args) =
         crate::cmd::unpack_argv(unsafe { core::slice::from_raw_parts(buf, len) }, argc)
     else {
-        error(c, unsafe { xstrdup(c"command too long".as_ptr()) });
+        error(c, "command too long");
         return;
     };
 
@@ -370,7 +369,11 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
 
         match pr.status {
             crate::tmux_sys::cmd_parse_status_CMD_PARSE_ERROR => {
-                error(c, pr.error);
+                unsafe {
+                    let err = CStr::from_ptr(pr.error).to_str().unwrap();
+                    error(c, err);
+                    libc::free(pr.error.cast());
+                }
                 return;
             }
             crate::tmux_sys::cmd_parse_status_CMD_PARSE_SUCCESS => pr.cmdlist,

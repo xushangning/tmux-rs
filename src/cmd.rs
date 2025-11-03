@@ -1,3 +1,5 @@
+pub(crate) mod queue;
+
 use core::ffi::{CStr, c_char, c_int};
 use std::io::Write;
 

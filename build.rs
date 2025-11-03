@@ -40,6 +40,8 @@ fn main() {
         .blocklist_type("ibuf")
         .raw_line("pub type ibuf = crate::compat::imsg::IBuf;")
         .no_copy("args_value")
+        .blocklist_type("cmdq_item")
+        .raw_line("pub type cmdq_item = crate::cmd::queue::Item;")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()
