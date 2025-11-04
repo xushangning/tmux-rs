@@ -63,6 +63,14 @@ bitflags! {
     }
 }
 
+#[allow(dead_code)]
+#[repr(C)]
+enum ClientExitType {
+    Return,
+    Shutdown,
+    Detach,
+}
+
 #[repr(C)]
 pub struct Client {
     name: *const c_char,
@@ -101,7 +109,7 @@ pub struct Client {
     status: crate::tmux_sys::status_line,
     theme: crate::tmux_sys::client_theme,
     flags: ClientFlags,
-    exit_type: c_uint,
+    exit_type: ClientExitType,
     exit_msgtype: crate::protocol::Msg,
     exit_session: *mut c_char,
     exit_message: *mut c_char,
