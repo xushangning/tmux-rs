@@ -18,7 +18,7 @@ use libc::{CODESET, LC_CTYPE, LC_TIME};
 use nix::unistd::Uid;
 
 use tmux_rs::{
-    self, ClientFlag, ModeKey, TMUX_CONF, TMUX_SOCK_PERM,
+    self, ClientFlags, ModeKey, TMUX_CONF, TMUX_SOCK_PERM,
     tmux_sys::{
         OPTIONS_TABLE_SERVER, OPTIONS_TABLE_SESSION, OPTIONS_TABLE_WINDOW, cfg_files, cfg_nfiles,
         cfg_quiet, environ_create, environ_find, environ_put, environ_set, global_environ,
@@ -166,9 +166,9 @@ fn main() {
         // tzset();
     }
 
-    let mut flags = ClientFlag::empty();
+    let mut flags = ClientFlags::empty();
     if env::args().next().map_or(false, |arg| arg.starts_with("-")) {
-        flags = ClientFlag::LOGIN;
+        flags = ClientFlags::LOGIN;
     }
 
     unsafe {
@@ -215,12 +215,12 @@ fn main() {
         }
     }
     if cli.no_daemon {
-        flags |= ClientFlag::NO_FORK;
+        flags |= ClientFlags::NO_FORK;
     }
     if cli.control > 0 {
-        flags |= ClientFlag::CONTROL;
+        flags |= ClientFlags::CONTROL;
         if cli.control > 1 {
-            flags |= ClientFlag::CONTROL_CONTROL;
+            flags |= ClientFlags::CONTROL_CONTROL;
         }
     }
     if !cli.config.is_empty() {
@@ -237,10 +237,10 @@ fn main() {
         }
     }
     if cli.login {
-        flags |= ClientFlag::LOGIN;
+        flags |= ClientFlags::LOGIN;
     }
     if cli.no_start_server {
-        flags |= ClientFlag::NO_START_SERVER;
+        flags |= ClientFlags::NO_START_SERVER;
     }
     for feat_s in &cli.features {
         unsafe {
@@ -252,13 +252,13 @@ fn main() {
         }
     }
     if cli.utf_8 {
-        flags |= ClientFlag::UTF8;
+        flags |= ClientFlags::UTF8;
     }
     for _ in 0..cli.verbose {
         tmux_rs::log::add_level();
     }
 
-    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(ClientFlag::NO_FORK))
+    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(ClientFlags::NO_FORK))
     {
         Cli::command().print_help().unwrap();
         process::exit(1);
@@ -282,7 +282,7 @@ fn main() {
     // terminal, or if not they know that output from UTF-8-capable
     // programs may be wrong.
     if env::var_os("TMUX").is_some() {
-        flags |= ClientFlag::UTF8;
+        flags |= ClientFlags::UTF8;
     } else {
         let s = match env::var("LC_ALL").ok() {
             Some(s) => {
@@ -307,7 +307,7 @@ fn main() {
         .or(env::var("LANG").ok())
         .unwrap_or_default();
         if s.eq_ignore_ascii_case("UTF-8") || s.eq_ignore_ascii_case("UTF8") {
-            flags |= ClientFlag::UTF8;
+            flags |= ClientFlags::UTF8;
         }
     }
 
@@ -393,7 +393,7 @@ fn main() {
             }
         }
 
-        flags |= ClientFlag::DEFAULT_SOCKET;
+        flags |= ClientFlags::DEFAULT_SOCKET;
         make_label(cli.label.as_deref()).unwrap()
     });
     unsafe {

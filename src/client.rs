@@ -37,7 +37,7 @@ use nix::{
 use thiserror::Error;
 
 use crate::{
-    ClientFlag, pledge,
+    ClientFlags, pledge,
     protocol::{Msg, MsgCommand},
     tmux::{setblocking, shell_argv0},
     tmux_sys::{
@@ -72,7 +72,7 @@ enum Exit {
 
 static mut PROC: *mut tmuxproc = ptr::null_mut();
 static mut PEER: *mut tmuxpeer = ptr::null_mut();
-static FLAGS: Mutex<ClientFlag> = Mutex::new(ClientFlag::empty());
+static FLAGS: Mutex<ClientFlags> = Mutex::new(ClientFlags::empty());
 static mut SUSPENDED: bool = false;
 static EXIT_REASON: Mutex<Option<Exit>> = Mutex::new(None);
 static mut EXIT_FLAG: bool = false;
@@ -130,7 +130,7 @@ fn get_lock(lockfile: &Path) -> Result<File, GetLockError> {
 }
 
 /// Connect client to server.
-fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<UnixStream> {
+fn connect(base: *mut event_base, path: &Path, flags: ClientFlags) -> io::Result<UnixStream> {
     debug!("socket is {}", path.display());
 
     let mut lock: Option<File> = None;
@@ -143,8 +143,8 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlag) -> io::Result<
             Err(err) => {
                 debug!("connect failed: {err}");
                 if err.kind() != ErrorKind::ConnectionRefused && err.kind() != ErrorKind::NotFound
-                    || flags.intersects(ClientFlag::NO_START_SERVER)
-                    || !flags.intersects(ClientFlag::START_SERVER)
+                    || flags.intersects(ClientFlags::NO_START_SERVER)
+                    || !flags.intersects(ClientFlags::START_SERVER)
                 {
                     break Err(err);
                 }
@@ -193,15 +193,15 @@ fn exit() {
     }
 }
 
-pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, feat: c_int) -> i32 {
+pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, feat: c_int) -> i32 {
     // Set up the initial command.
     let msg: Msg;
     if unsafe { !crate::tmux_sys::shell_command.is_null() } {
         msg = Msg::Shell;
-        flags |= ClientFlag::START_SERVER;
+        flags |= ClientFlags::START_SERVER;
     } else if args.is_empty() {
         msg = Msg::Command;
-        flags |= ClientFlag::START_SERVER;
+        flags |= ClientFlags::START_SERVER;
     } else {
         msg = Msg::Command;
 
@@ -221,7 +221,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
                 #[allow(non_upper_case_globals)]
                 cmd_parse_status_CMD_PARSE_SUCCESS => {
                     if cmd_list_any_have(pr.cmdlist, CMD_STARTSERVER.try_into().unwrap()) != 0 {
-                        flags |= ClientFlag::START_SERVER;
+                        flags |= ClientFlags::START_SERVER;
                     }
                     cmd_list_free(pr.cmdlist);
                 }
@@ -319,7 +319,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
     if FLAGS
         .lock()
         .unwrap()
-        .intersects(ClientFlag::CONTROL_CONTROL)
+        .intersects(ClientFlags::CONTROL_CONTROL)
     {
         saved_tio = match tcgetattr(io::stdin()) {
             Ok(tio) => Some(tio),
@@ -407,7 +407,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         if FLAGS
             .lock()
             .unwrap()
-            .intersects(ClientFlag::CONTROL_CONTROL)
+            .intersects(ClientFlags::CONTROL_CONTROL)
         {
             tcsetattr(io::stdout(), SetArg::TCSAFLUSH, saved_tio.as_ref().unwrap()).ok();
         }
@@ -431,7 +431,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         if matches!(unsafe { EXIT_TYPE.assume_init_ref() }, Msg::DetachKill) && ppid.as_raw() > 1 {
             kill(ppid, Signal::SIGHUP).ok();
         }
-    } else if FLAGS.lock().unwrap().intersects(ClientFlag::CONTROL) {
+    } else if FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
         match EXIT_REASON.lock().unwrap().as_ref() {
             None => println!("%exit"),
             Some(reason) => println!("%exit {reason}"),
@@ -440,7 +440,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         if FLAGS
             .lock()
             .unwrap()
-            .intersects(ClientFlag::CONTROL_WAIT_EXIT)
+            .intersects(ClientFlags::CONTROL_WAIT_EXIT)
         {
             // TODO: i thought the stdin is already line buffered. why is setvbuf required?
             // setvbuf(stdin, NULL, _IOLBF, 0);
@@ -449,7 +449,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlag, fe
         if FLAGS
             .lock()
             .unwrap()
-            .intersects(ClientFlag::CONTROL_CONTROL)
+            .intersects(ClientFlags::CONTROL_CONTROL)
         {
             print!("\x1b\\");
             io::stdout().flush().ok();
@@ -585,7 +585,7 @@ fn exec(shell: &Path, shell_cmd: &OsStr) -> ! {
             .env("SHELL", shell)
             .arg0(shell_argv0(
                 shell,
-                FLAGS.lock().unwrap().intersects(ClientFlag::LOGIN),
+                FLAGS.lock().unwrap().intersects(ClientFlags::LOGIN),
             ))
             .arg("-c")
             .arg(shell_cmd)
@@ -796,7 +796,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
                 PEER,
                 imsg,
                 1,
-                match !FLAGS.lock().unwrap().intersects(ClientFlag::CONTROL) {
+                match !FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
                     true => 1,
                     false => 0,
                 },
@@ -815,7 +815,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
                 PEER,
                 imsg,
                 1,
-                match !FLAGS.lock().unwrap().intersects(ClientFlag::CONTROL) {
+                match !FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
                     true => 1,
                     false => 0,
                 },

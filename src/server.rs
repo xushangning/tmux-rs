@@ -42,7 +42,7 @@ use nix::{
 };
 
 use crate::{
-    ClientFlag,
+    ClientFlags,
     compat::queue::tailq,
     libevent::{evtimer_add, evtimer_set},
     pledge,
@@ -60,13 +60,13 @@ use crate::{
 };
 
 static mut LISTENER: Option<UnixListener> = None;
-static mut CLIENT_FLAGS: ClientFlag = ClientFlag::empty();
+static mut CLIENT_FLAGS: ClientFlags = ClientFlags::empty();
 static mut EXIT: bool = false;
 static mut EV_ACCEPT: MaybeUninit<crate::tmux_sys::event> = MaybeUninit::zeroed();
 static mut EV_TIDY: MaybeUninit<crate::tmux_sys::event> = MaybeUninit::uninit();
 
 /// Create server socket.
-fn create_socket(flags: ClientFlag) -> anyhow::Result<UnixListener> {
+fn create_socket(flags: ClientFlags) -> anyhow::Result<UnixListener> {
     let socket_path = Path::new(OsStr::from_bytes(unsafe {
         CStr::from_ptr(crate::tmux_sys::socket_path).to_bytes()
     }));
@@ -77,7 +77,7 @@ fn create_socket(flags: ClientFlag) -> anyhow::Result<UnixListener> {
         libc::umask(
             S_IXUSR
                 | S_IRWXO
-                | if flags.intersects(ClientFlag::DEFAULT_SOCKET) {
+                | if flags.intersects(ClientFlags::DEFAULT_SOCKET) {
                     S_IXGRP
                 } else {
                     S_IRWXG
@@ -124,7 +124,7 @@ extern "C" fn tidy_event(_fd: c_int, _events: c_short, _data: *mut c_void) {
 /// Fork new server.
 pub(crate) fn start(
     client: *mut tmuxproc,
-    flags: ClientFlag,
+    flags: ClientFlags,
     base: *mut event_base,
     lock_file: Option<File>,
 ) -> UnixStream {
@@ -133,7 +133,7 @@ pub(crate) fn start(
     sigprocmask(SigmaskHow::SIG_BLOCK, Some(&set), Some(&mut oldset)).unwrap();
 
     let mut fd: Option<UnixStream> = None;
-    if !flags.intersects(ClientFlag::NO_FORK) {
+    if !flags.intersects(ClientFlags::NO_FORK) {
         let (fork_result, sock) = crate::proc::fork_and_daemon();
         if matches!(fork_result, ForkResult::Parent { child: _ }) {
             sigprocmask(SigmaskHow::SIG_SETMASK, Some(&oldset), None).unwrap();
@@ -196,7 +196,7 @@ pub(crate) fn start(
         }
     }
     unsafe {
-        if !flags.intersects(ClientFlag::NO_FORK) {
+        if !flags.intersects(ClientFlags::NO_FORK) {
             c = crate::server::client::create(fd.unwrap()).as_ptr();
         } else {
             options_set_number(crate::tmux_sys::global_options, c"exit-empty".as_ptr(), 0);

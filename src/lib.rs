@@ -37,7 +37,7 @@ pub enum ModeKey {
 bitflags! {
     #[repr(C)]
     #[derive(Clone, Copy, Debug, AnyBitPattern, NoUninit)]
-    pub struct ClientFlag: u64 {
+    pub struct ClientFlags: u64 {
         const LOGIN = 1 << 1;
         const NO_START_SERVER = 1 << 12;
         const CONTROL = 1 << 13;
