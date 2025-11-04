@@ -18,7 +18,7 @@ pub(crate) mod util;
 pub use compat::{getptmfd, pledge};
 pub use tmux::get_shell;
 
-use core::ffi::{CStr, c_char};
+use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use bitflags::bitflags;
 use bytemuck::{AnyBitPattern, NoUninit};
@@ -48,6 +48,91 @@ bitflags! {
         const NO_FORK = 1 << 30;
         const CONTROL_WAIT_EXIT = 1 << 33;
     }
+}
+
+#[repr(C)]
+pub struct Client {
+    name: *const c_char,
+    peer: *mut crate::proc::Peer,
+    queue: *mut crate::tmux_sys::cmdq_list,
+    windows: crate::tmux_sys::client_windows,
+    control_state: *mut crate::tmux_sys::control_state,
+    pause_age: c_uint,
+    pid: libc::pid_t,
+    fd: c_int,
+    out_fd: c_int,
+    event: crate::tmux_sys::event,
+    retval: c_int,
+    creation_time: libc::timeval,
+    activity_time: libc::timeval,
+    last_activity_time: libc::timeval,
+    environ: *mut crate::tmux_sys::environ,
+    jobs: *mut crate::tmux_sys::format_job_tree,
+    title: *mut c_char,
+    path: *mut c_char,
+    cwd: *const c_char,
+    term_name: *mut c_char,
+    term_features: c_int,
+    term_type: *mut c_char,
+    term_caps: *mut *mut c_char,
+    term_ncaps: c_uint,
+    ttyname: *mut c_char,
+    tty: crate::tmux_sys::tty,
+    written: usize,
+    discarded: usize,
+    redraw: usize,
+    repeat_timer: crate::tmux_sys::event,
+    click_timer: crate::tmux_sys::event,
+    click_button: c_uint,
+    click_event: crate::tmux_sys::mouse_event,
+    status: crate::tmux_sys::status_line,
+    theme: crate::tmux_sys::client_theme,
+    flags: u64,
+    exit_type: c_uint,
+    exit_msgtype: crate::protocol::Msg,
+    exit_session: *mut c_char,
+    exit_message: *mut c_char,
+    keytable: *mut crate::tmux_sys::key_table,
+    last_key: crate::tmux_sys::key_code,
+    redraw_panes: u64,
+    redraw_scrollbars: u64,
+    message_ignore_keys: c_int,
+    message_ignore_styles: c_int,
+    message_string: *mut c_char,
+    message_timer: crate::tmux_sys::event,
+    prompt_string: *mut c_char,
+    prompt_formats: *mut crate::tmux_sys::format_tree,
+    prompt_buffer: *mut crate::tmux_sys::utf8_data,
+    prompt_last: *mut c_char,
+    prompt_index: usize,
+    prompt_inputcb: crate::tmux_sys::prompt_input_cb,
+    prompt_freecb: crate::tmux_sys::prompt_free_cb,
+    prompt_data: *mut c_void,
+    prompt_hindex: [c_uint; 4],
+    prompt_mode: c_uint,
+    prompt_saved: *mut crate::tmux_sys::utf8_data,
+    prompt_flags: c_int,
+    prompt_type: crate::tmux_sys::prompt_type,
+    prompt_cursor: c_int,
+    session: *mut crate::tmux_sys::session,
+    last_session: *mut crate::tmux_sys::session,
+    references: c_int,
+    pan_window: *mut c_void,
+    pan_ox: c_uint,
+    pan_oy: c_uint,
+    overlay_check: crate::tmux_sys::overlay_check_cb,
+    overlay_mode: crate::tmux_sys::overlay_mode_cb,
+    overlay_draw: crate::tmux_sys::overlay_draw_cb,
+    overlay_key: crate::tmux_sys::overlay_key_cb,
+    overlay_free: crate::tmux_sys::overlay_free_cb,
+    overlay_resize: crate::tmux_sys::overlay_resize_cb,
+    overlay_data: *mut c_void,
+    overlay_timer: crate::tmux_sys::event,
+    files: crate::tmux_sys::client_files,
+    source_file_depth: c_uint,
+    clipboard_panes: *mut c_uint,
+    clipboard_npanes: c_uint,
+    entry: crate::compat::queue::tailq::Entry<Self>,
 }
 
 /// Skip until end.

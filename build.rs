@@ -42,6 +42,8 @@ fn main() {
         .no_copy("args_value")
         .blocklist_type("cmdq_item")
         .raw_line("pub type cmdq_item = crate::cmd::queue::Item;")
+        .blocklist_type("client")
+        .raw_line("pub(crate) type client = crate::Client;")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()
