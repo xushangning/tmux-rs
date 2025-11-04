@@ -8,6 +8,7 @@ use libc::time_t;
 use log::debug;
 
 use crate::{
+    ClientFlags,
     compat::queue::tailq,
     tmux_sys::{
         cmd_find_state, cmd_list, cmd_retval, cmdq_cb, cmdq_list, cmdq_new_state, cmdq_state,
@@ -118,17 +119,17 @@ pub(crate) fn error(item: &mut Item, msg: &mut str) {
             }
         }
         Some(c) => {
-            if c.session.is_null() || c.flags & crate::tmux_sys::CLIENT_CONTROL as u64 != 0 {
+            if c.session.is_null() || c.flags.intersects(ClientFlags::CONTROL) {
                 unsafe {
                     server_add_message(c"%s message: %s".as_ptr(), c.name, msg.as_ptr());
                 }
                 let mut msg_ptr = msg.as_ptr();
                 let mut changed = false;
-                if c.flags & crate::tmux_sys::CLIENT_UTF8 as u64 == 0 {
+                if !c.flags.intersects(ClientFlags::UTF8) {
                     msg_ptr = unsafe { utf8_sanitize(msg_ptr) };
                     changed = true;
                 }
-                if c.flags & crate::tmux_sys::CLIENT_CONTROL as u64 != 0 {
+                if c.flags.intersects(ClientFlags::CONTROL) {
                     unsafe {
                         control_write(c, c"%s".as_ptr(), msg_ptr);
                     }

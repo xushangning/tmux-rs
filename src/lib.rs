@@ -38,15 +38,28 @@ bitflags! {
     #[repr(C)]
     #[derive(Clone, Copy, Debug, AnyBitPattern, NoUninit)]
     pub struct ClientFlags: u64 {
+        const TERMINAL = 1;
         const LOGIN = 1 << 1;
+        const EXIT = 1 << 2;
+        const REPEAT = 1 << 5;
+        const SUSPENDED = 1 << 6;
+        const ATTACHED = 1 << 7;
+        const DEAD = 1 << 9;
+        const READ_ONLY = 1 << 11;
         const NO_START_SERVER = 1 << 12;
         const CONTROL = 1 << 13;
         const CONTROL_CONTROL = 1 << 14;
+        const FOCUSED = 1 << 15;
         const UTF8 = 1 << 16;
+        const IDENTIFIED = 1 << 18;
+        const DOUBLE_CLICK = 1 << 20;
+        const TRIPLE_CLICK = 1 << 21;
         const DEFAULT_SOCKET = 1 << 27;
         const START_SERVER = 1 << 28;
         const NO_FORK = 1 << 30;
         const CONTROL_WAIT_EXIT = 1 << 33;
+
+        const _ = !0;
     }
 }
 
@@ -87,7 +100,7 @@ pub struct Client {
     click_event: crate::tmux_sys::mouse_event,
     status: crate::tmux_sys::status_line,
     theme: crate::tmux_sys::client_theme,
-    flags: u64,
+    flags: ClientFlags,
     exit_type: c_uint,
     exit_msgtype: crate::protocol::Msg,
     exit_session: *mut c_char,

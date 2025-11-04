@@ -47,14 +47,14 @@ use crate::{
     libevent::{evtimer_add, evtimer_set},
     pledge,
     tmux_sys::{
-        CLIENT_EXIT, CLIENT_IDENTIFIED, CLIENT_SUSPENDED, EV_READ, PANE_EXITED, PANE_STATUSREADY,
-        RB_NEGINF, WAIT_ANY, client_CLIENT_EXIT_SHUTDOWN, cmd_wait_for_flush, cmdq_next, event_add,
-        event_base, event_del, event_initialized, event_reinit, event_set, format_tidy_jobs,
-        input_key_build, job_check_died, job_kill_all, job_still_running, key_bindings_init,
-        log_get_level, options_get_number, options_set_number, proc_clear_signals, proc_loop,
-        proc_set_signals, proc_toggle_log, server_acl_init, server_acl_join, server_client_create,
-        server_client_loop, server_client_lost, server_destroy_pane, session_destroy,
-        sessions_RB_MINMAX, sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
+        EV_READ, PANE_EXITED, PANE_STATUSREADY, RB_NEGINF, WAIT_ANY, client_CLIENT_EXIT_SHUTDOWN,
+        cmd_wait_for_flush, cmdq_next, event_add, event_base, event_del, event_initialized,
+        event_reinit, event_set, format_tidy_jobs, input_key_build, job_check_died, job_kill_all,
+        job_still_running, key_bindings_init, log_get_level, options_get_number,
+        options_set_number, proc_clear_signals, proc_loop, proc_set_signals, proc_toggle_log,
+        server_acl_init, server_acl_join, server_client_create, server_client_loop,
+        server_client_lost, server_destroy_pane, session_destroy, sessions_RB_MINMAX,
+        sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
         utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
 };
@@ -211,7 +211,7 @@ pub(crate) fn start(
         let cause = format!("{err:#}");
         if let Some(c) = unsafe { c.as_mut() } {
             c.exit_message = unsafe { xstrdup(CString::new(cause).unwrap().as_ptr()) };
-            c.flags |= CLIENT_EXIT as u64;
+            c.flags |= ClientFlags::EXIT;
         } else {
             eprintln!("{cause}");
             process::exit(1);
@@ -248,7 +248,7 @@ extern "C" fn loop_() -> c_int {
         let items = unsafe {
             let mut items = cmdq_next(ptr::null_mut());
             for mut c in crate::tmux_sys::clients.assume_init_ref() {
-                if c.as_ref().flags & CLIENT_IDENTIFIED as u64 != 0 {
+                if c.as_ref().flags.intersects(ClientFlags::IDENTIFIED) {
                     items += cmdq_next(c.as_mut());
                 }
             }
@@ -305,12 +305,12 @@ fn send_exit() {
 
     for mut c_ptr in unsafe { crate::tmux_sys::clients.assume_init_ref() } {
         let c = unsafe { c_ptr.as_mut() };
-        if c.flags & CLIENT_SUSPENDED as u64 != 0 {
+        if c.flags.intersects(ClientFlags::SUSPENDED) {
             unsafe {
                 server_client_lost(c_ptr.as_mut());
             }
         } else {
-            c.flags |= CLIENT_EXIT as u64;
+            c.flags |= ClientFlags::EXIT;
             c.exit_type = client_CLIENT_EXIT_SHUTDOWN;
         }
         c.session = ptr::null_mut();
@@ -395,7 +395,7 @@ extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
         let c = server_client_create(new_fd);
         if server_acl_join(c) == 0 {
             (*c).exit_message = xstrdup(c"access not allowed".as_ptr());
-            (*c).flags |= CLIENT_EXIT as u64;
+            (*c).flags |= ClientFlags::EXIT;
         }
     }
 }

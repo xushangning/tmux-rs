@@ -11,6 +11,7 @@ use log::debug;
 use nix::errno::Errno;
 
 use crate::{
+    ClientFlags,
     compat::{
         imsg::{HEADER_SIZE, IMsg},
         tree::rb,
@@ -18,10 +19,8 @@ use crate::{
     libevent::evtimer_set,
     protocol::Msg,
     tmux_sys::{
-        _PATH_BSHELL, CLIENT_CONTROL, CLIENT_DEAD, CLIENT_DOUBLECLICK, CLIENT_EXIT, CLIENT_FOCUSED,
-        CLIENT_IDENTIFIED, CLIENT_READONLY, CLIENT_REPEAT, CLIENT_SUSPENDED, CLIENT_TERMINAL,
-        CLIENT_TRIPLECLICK, CMD_READONLY, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
-        checkshell, client_file, clients, cmd_list_all_have, cmd_list_copy, cmd_list_free,
+        _PATH_BSHELL, CMD_READONLY, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished, checkshell,
+        client_file, clients, cmd_list_all_have, cmd_list_copy, cmd_list_free,
         cmd_parse_from_arguments, cmd_retval_CMD_RETURN_NORMAL, cmdq_append, cmdq_get_callback1,
         cmdq_get_command, control_ready, control_start, environ_put, file_read_data,
         file_read_done, file_write_ready, global_options, global_s_options, imsg_get_fd,
@@ -81,7 +80,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<crate::tmux_sys::client> {
     unsafe {
         status_init(ret.as_ptr());
     }
-    c.flags |= CLIENT_FOCUSED as u64;
+    c.flags |= ClientFlags::FOCUSED;
 
     unsafe {
         c.keytable = key_bindings_get_table(c"root".as_ptr(), 1);
@@ -135,11 +134,11 @@ fn update_latest(c: &mut crate::tmux_sys::client) {
 extern "C" fn repeat_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
     let c = unsafe { (data as *mut crate::tmux_sys::client).as_mut() }.unwrap();
 
-    if c.flags & CLIENT_REPEAT as u64 != 0 {
+    if c.flags.intersects(ClientFlags::REPEAT) {
         unsafe {
             server_client_set_key_table(c, ptr::null_mut());
         }
-        c.flags &= !CLIENT_REPEAT as u64;
+        c.flags.remove(ClientFlags::REPEAT);
         unsafe {
             server_status_client(c);
         }
@@ -152,7 +151,7 @@ extern "C" fn click_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
 
     debug!("click timer expired");
 
-    if c.flags & CLIENT_TRIPLECLICK as u64 != 0 {
+    if c.flags.intersects(ClientFlags::TRIPLE_CLICK) {
         // Waiting for a third click that hasn't happened, so this must
         // have been a double click.
         let event = unsafe {
@@ -169,7 +168,8 @@ extern "C" fn click_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
             }
         }
     }
-    c.flags &= !((CLIENT_DOUBLECLICK | CLIENT_TRIPLECLICK) as u64);
+    c.flags
+        .remove(ClientFlags::DOUBLE_CLICK | ClientFlags::TRIPLE_CLICK);
 }
 
 /// Dispatch message from client.
@@ -178,7 +178,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
 
     let c = unsafe { (arg as *mut crate::tmux_sys::client).as_mut() }.unwrap();
 
-    if c.flags & CLIENT_DEAD as u64 != 0 {
+    if c.flags.intersects(ClientFlags::DEAD) {
         return;
     }
 
@@ -204,7 +204,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 panic!("bad MSG_RESIZE size");
             }
 
-            if c.flags & CLIENT_CONTROL as u64 == 0 {
+            if !c.flags.intersects(ClientFlags::CONTROL) {
                 update_latest(c);
                 unsafe {
                     tty_resize(&raw mut c.tty);
@@ -238,10 +238,10 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 panic!("bad MSG_WAKEUP size");
             }
 
-            if c.flags & CLIENT_SUSPENDED as u64 == 0 {
+            if !c.flags.intersects(ClientFlags::SUSPENDED) {
                 return;
             }
-            c.flags &= !(CLIENT_SUSPENDED as u64);
+            c.flags.remove(ClientFlags::SUSPENDED);
 
             if c.fd == -1 || c.session.is_null() {
                 // exited already
@@ -297,10 +297,10 @@ extern "C" fn command_done(
 ) -> crate::tmux_sys::cmd_retval {
     let c = unsafe { crate::tmux_sys::cmdq_get_client(item).as_mut().unwrap() };
 
-    if c.flags & crate::tmux_sys::CLIENT_ATTACHED as u64 == 0 {
-        c.flags |= CLIENT_EXIT as u64;
-    } else if c.flags & CLIENT_EXIT as u64 == 0 {
-        if c.flags & CLIENT_CONTROL as u64 != 0 {
+    if !c.flags.intersects(ClientFlags::ATTACHED) {
+        c.flags |= ClientFlags::EXIT;
+    } else if !c.flags.intersects(ClientFlags::EXIT) {
+        if c.flags.intersects(ClientFlags::CONTROL) {
             unsafe {
                 control_ready(c);
             }
@@ -314,7 +314,7 @@ extern "C" fn command_done(
 
 /// Handle command message.
 fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
-    if c.flags & CLIENT_EXIT as u64 != 0 {
+    if c.flags.intersects(ClientFlags::EXIT) {
         return;
     }
 
@@ -338,7 +338,7 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
             cmdq_append(c, crate::cmd::queue::get_error(cause));
         }
 
-        c.flags |= CLIENT_EXIT as u64;
+        c.flags |= ClientFlags::EXIT;
     };
     let Some(args) =
         crate::cmd::unpack_argv(unsafe { core::slice::from_raw_parts(buf, len) }, argc)
@@ -383,7 +383,7 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
         }
     };
 
-    let new_item = if c.flags & CLIENT_READONLY as u64 != 0
+    let new_item = if c.flags.intersects(ClientFlags::READ_ONLY)
         && unsafe { cmd_list_all_have(cmdlist, CMD_READONLY.try_into().unwrap()) } == 0
     {
         unsafe {
@@ -415,7 +415,7 @@ fn dispatch_command(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
 fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     use crate::protocol::Msg::*;
 
-    if c.flags & CLIENT_IDENTIFIED as u64 != 0 {
+    if c.flags.intersects(ClientFlags::IDENTIFIED) {
         panic!("out-of-order identify message");
     }
 
@@ -440,7 +440,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
                 panic!("bad MSG_IDENTIFY_FLAGS size");
             }
             let flags = unsafe { ptr::read_unaligned(data as *const c_int) };
-            c.flags |= flags as u64;
+            c.flags |= ClientFlags::from_bits_retain(flags as u64);
             debug!("client {:?} IDENTIFY_FLAGS {:#x}", c_ptr, flags);
         }
         IdentifyLongFlags => {
@@ -448,7 +448,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
                 panic!("bad MSG_IDENTIFY_LONGFLAGS size");
             }
             let longflags = unsafe { ptr::read_unaligned(data as *const u64) };
-            c.flags |= longflags;
+            c.flags |= ClientFlags::from_bits_retain(longflags);
             debug!("client {:?} IDENTIFY_LONGFLAGS {:#x}", c_ptr, longflags);
         }
         IdentifyTerm => {
@@ -550,7 +550,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     if !matches!(msg_type, IdentifyDone) {
         return;
     }
-    c.flags |= CLIENT_IDENTIFIED as u64;
+    c.flags |= ClientFlags::IDENTIFIED;
 
     unsafe {
         if *c.ttyname != 0 {
@@ -574,7 +574,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     }
 
     unsafe {
-        if c.flags & CLIENT_CONTROL as u64 != 0 {
+        if c.flags.intersects(ClientFlags::CONTROL) {
             control_start(c);
         } else if c.fd != -1 {
             if tty_init(&raw mut c.tty, c) != 0 {
@@ -582,7 +582,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
                 c.fd = -1;
             } else {
                 tty_resize(&raw mut c.tty);
-                c.flags |= CLIENT_TERMINAL as u64;
+                c.flags |= ClientFlags::TERMINAL;
             }
             libc::close(c.out_fd);
             c.out_fd = -1;
@@ -593,7 +593,7 @@ fn dispatch_identify(c: &mut crate::tmux_sys::client, imsg: &IMsg) {
     // clients are allowed to continue with their command even if the
     // config has not been loaded - they might have been run from inside it
     unsafe {
-        if c.flags & CLIENT_EXIT as u64 == 0
+        if !c.flags.intersects(ClientFlags::EXIT)
             && cfg_finished == 0
             && clients.assume_init_ref().front() == Some(NonNull::from_mut(c))
         {
