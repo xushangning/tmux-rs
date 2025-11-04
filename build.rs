@@ -25,6 +25,8 @@ fn main() {
         .raw_line("type window_pane_tree = crate::compat::tree::rb::Head<window_pane, { core::mem::offset_of!(window_pane, tree_entry) }>;")
         .blocklist_type("sessions")
         .raw_line("type sessions = crate::compat::tree::rb::Head<session, { core::mem::offset_of!(session, entry) }>;")
+        .blocklist_type("window_pane")
+        .raw_line("type window_pane = crate::window::Pane;")
         .blocklist_type("window_panes")
         .raw_line("type window_panes = core::mem::MaybeUninit<crate::compat::queue::tailq::Head<window_pane, { core::mem::offset_of!(window_pane, entry) }>>;")
         .blocklist_type("tmuxproc")

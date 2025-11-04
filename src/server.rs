@@ -47,16 +47,16 @@ use crate::{
     libevent::{evtimer_add, evtimer_set},
     pledge,
     tmux_sys::{
-        EV_READ, PANE_EXITED, PANE_STATUSREADY, RB_NEGINF, WAIT_ANY, cmd_wait_for_flush, cmdq_next,
-        event_add, event_base, event_del, event_initialized, event_reinit, event_set,
-        format_tidy_jobs, input_key_build, job_check_died, job_kill_all, job_still_running,
-        key_bindings_init, log_get_level, options_get_number, options_set_number,
-        proc_clear_signals, proc_loop, proc_set_signals, proc_toggle_log, server_acl_init,
-        server_acl_join, server_client_create, server_client_loop, server_client_lost,
-        server_destroy_pane, session_destroy, sessions_RB_MINMAX, sessions_RB_NEXT,
-        status_prompt_save_history, tmuxproc, tty_create_log, utf8_update_width_cache,
-        window_pane_destroy_ready, xstrdup,
+        EV_READ, RB_NEGINF, WAIT_ANY, cmd_wait_for_flush, cmdq_next, event_add, event_base,
+        event_del, event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
+        job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
+        options_get_number, options_set_number, proc_clear_signals, proc_loop, proc_set_signals,
+        proc_toggle_log, server_acl_init, server_acl_join, server_client_create,
+        server_client_loop, server_client_lost, server_destroy_pane, session_destroy,
+        sessions_RB_MINMAX, sessions_RB_NEXT, status_prompt_save_history, tmuxproc, tty_create_log,
+        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
+    window::PaneFlags,
 };
 
 static mut LISTENER: Option<UnixListener> = None;
@@ -502,10 +502,10 @@ fn child_exited(pid: Pid, status: c_int) {
                 let wp = wp_ptr.as_mut();
                 if wp.pid == pid.as_raw() {
                     wp.status = status;
-                    wp.flags |= PANE_STATUSREADY as i32;
+                    wp.flags |= PaneFlags::STATUS_READY;
 
                     debug!("%{} exited", wp.id);
-                    wp.flags |= PANE_EXITED as i32;
+                    wp.flags |= PaneFlags::EXITED;
 
                     if window_pane_destroy_ready(wp_ptr.as_ptr()) != 0 {
                         server_destroy_pane(wp_ptr.as_ptr(), 1);

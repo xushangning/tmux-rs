@@ -14,6 +14,7 @@ mod server;
 pub mod tmux;
 pub mod tmux_sys;
 pub(crate) mod util;
+pub(crate) mod window;
 
 pub use compat::{getptmfd, pledge};
 pub use tmux::get_shell;
