@@ -10,7 +10,8 @@ cargo build --release
 
 # Run the tests and save the output
 cd regress
-TEST_TMUX=(realpath ../target/release/tmux-rs) make -i &| tee test_result_rust
+# Use timeout with -k to prevent hanging tests from blocking the coding agent.
+TEST_TMUX=(realpath ../target/release/tmux-rs) timeout -k 30 420 make -i |& tee test_result_rust
 
 # Compare the output
 diff -u ../../tmux/regress/test_result_c test_result_rust
