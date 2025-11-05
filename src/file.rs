@@ -14,6 +14,8 @@ use crate::{
     tmux_sys::{bufferevent_write, client_file, client_files, msg_write_data},
 };
 
+pub(crate) type ClientFiles = rb::Head<client_file, { offset_of!(client_file, entry) }>;
+
 impl Ord for client_file {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.stream.cmp(&other.stream)
@@ -49,7 +51,7 @@ pub(crate) fn write_data(files: &mut client_files, imsg: &mut IMsg) {
             .write(msg.as_mut().unwrap().stream);
     }
     let cf = unsafe {
-        mem::transmute::<_, &rb::Head<client_file, { offset_of!(client_file, entry) }>>(files)
+        mem::transmute::<_, &ClientFiles>(files)
             .get(find.assume_init_ref())
             .expect("unknown stream number")
             .as_mut()

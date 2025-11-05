@@ -9,7 +9,7 @@ use crate::{
     compat::{queue::tailq, tree::rb},
     tmux_sys::{
         bufferevent, colour_palette, grid_cell, input_ctx, layout_cell, options, utf8_data,
-        window_mode_entry, window_pane_offset, window_pane_resizes,
+        window_mode_entry, window_pane_offset, window_pane_resize,
     },
 };
 
@@ -50,7 +50,8 @@ pub struct Pane {
     pub(crate) event: *mut bufferevent,
     pub(crate) offset: window_pane_offset,
     pub(crate) base_offset: usize,
-    pub(crate) resize_queue: window_pane_resizes,
+    pub(crate) resize_queue:
+        MaybeUninit<tailq::Head<window_pane_resize, { offset_of!(window_pane_resize, entry) }>>,
     pub(crate) resize_timer: crate::tmux_sys::event,
     ictx: *mut input_ctx,
     cached_gc: grid_cell,

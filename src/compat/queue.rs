@@ -58,8 +58,33 @@ pub mod tailq {
             }
         }
 
+        pub fn remove(self: Pin<&mut Self>, elt: NonNull<T>) {
+            unsafe {
+                let entry = Entry::new::<OFFSET>(elt).as_mut();
+                match NonNull::new(entry.next) {
+                    Some(next) => Entry::new::<OFFSET>(next).as_mut().prev = entry.prev,
+                    None => self.get_unchecked_mut().0.prev = entry.prev,
+                }
+                entry.prev.as_mut().next = entry.next;
+            }
+        }
+
         pub fn front(&self) -> Option<NonNull<T>> {
-            NonNull::new(self.0.next)
+            self.0.next()
+        }
+
+        pub fn back(&self) -> Option<NonNull<T>> {
+            self.0.prev()
+        }
+
+        pub fn drain(self: Pin<&mut Self>) -> Drain<T, OFFSET> {
+            let ret = Drain {
+                current: NonNull::new(self.0.next),
+            };
+            let pinned_self = unsafe { self.get_unchecked_mut() };
+            pinned_self.0.next = ptr::null_mut();
+            pinned_self.0.prev = NonNull::from_mut(&mut pinned_self.0);
+            ret
         }
     }
 
@@ -87,7 +112,7 @@ pub mod tailq {
     }
 
     #[repr(C)]
-    pub(crate) struct Entry<T> {
+    pub struct Entry<T> {
         /// next element
         next: *mut T,
         /// In the original tmux source code, this field has type *mut T and
@@ -102,5 +127,15 @@ pub mod tailq {
         unsafe fn new<const OFFSET: usize>(node: NonNull<T>) -> NonNull<Self> {
             unsafe { node.byte_add(OFFSET).cast() }
         }
+
+        pub fn next(&self) -> Option<NonNull<T>> {
+            NonNull::new(self.next)
+        }
+
+        pub fn prev(&self) -> Option<NonNull<T>> {
+            NonNull::new(unsafe { self.prev.as_ref().prev.as_ref().next })
+        }
     }
+
+    pub type Drain<T, const OFFSET: usize> = Iter<T, OFFSET>;
 }

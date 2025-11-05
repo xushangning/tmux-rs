@@ -42,10 +42,14 @@ bitflags! {
         const TERMINAL = 1;
         const LOGIN = 1 << 1;
         const EXIT = 1 << 2;
+        const REDRAW_WINDOW = 1 << 3;
+        const REDRAW_STATUS = 1 << 4;
         const REPEAT = 1 << 5;
         const SUSPENDED = 1 << 6;
         const ATTACHED = 1 << 7;
+        const EXITED = 1 << 8;
         const DEAD = 1 << 9;
+        const REDRAW_BORDERS = 1 << 10;
         const READ_ONLY = 1 << 11;
         const NO_START_SERVER = 1 << 12;
         const CONTROL = 1 << 13;
@@ -53,12 +57,24 @@ bitflags! {
         const FOCUSED = 1 << 15;
         const UTF8 = 1 << 16;
         const IDENTIFIED = 1 << 18;
+        const STATUS_FORCE = 1 << 19;
         const DOUBLE_CLICK = 1 << 20;
         const TRIPLE_CLICK = 1 << 21;
+        const REDRAW_STATUS_ALWAYS = 1 << 24;
+        const REDRAW_OVERLAY = 1 << 25;
         const DEFAULT_SOCKET = 1 << 27;
         const START_SERVER = 1 << 28;
+        const REDRAW_PANES = 1 << 29;
         const NO_FORK = 1 << 30;
         const CONTROL_WAIT_EXIT = 1 << 33;
+        const REDRAW_SCROLLBARS = 1 << 38;
+        const ALL_REDRAW_FLAGS = Self::REDRAW_WINDOW.bits()
+            | Self::REDRAW_STATUS.bits()
+            | Self::REDRAW_STATUS_ALWAYS.bits()
+            | Self::REDRAW_BORDERS.bits()
+            | Self::REDRAW_OVERLAY.bits()
+            | Self::REDRAW_PANES.bits()
+            | Self::REDRAW_SCROLLBARS.bits();
 
         const _ = !0;
     }

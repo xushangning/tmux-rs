@@ -52,9 +52,8 @@ use crate::{
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
         options_get_number, options_set_number, proc_clear_signals, proc_loop, proc_set_signals,
         proc_toggle_log, server_acl_init, server_acl_join, server_client_create,
-        server_client_loop, server_client_lost, server_destroy_pane, session_destroy,
-        status_prompt_save_history, tmuxproc, tty_create_log, utf8_update_width_cache,
-        window_pane_destroy_ready, xstrdup,
+        server_client_lost, server_destroy_pane, session_destroy, status_prompt_save_history,
+        tmuxproc, tty_create_log, utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
     window::PaneFlags,
 };
@@ -261,7 +260,7 @@ extern "C" fn loop_() -> c_int {
     }
 
     unsafe {
-        server_client_loop();
+        crate::server::client::loop_();
 
         if options_get_number(crate::tmux_sys::global_options, c"exit-empty".as_ptr()) == 0 && !EXIT
         {
