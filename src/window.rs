@@ -1,5 +1,5 @@
 use core::{
-    ffi::{c_char, c_int, c_uint},
+    ffi::{c_char, c_int, c_uint, c_void},
     mem::{MaybeUninit, offset_of},
 };
 
@@ -8,8 +8,8 @@ use bitflags::bitflags;
 use crate::{
     compat::{queue::tailq, tree::rb},
     tmux_sys::{
-        bufferevent, colour_palette, grid_cell, input_ctx, layout_cell, options, window_mode_entry,
-        window_pane_offset, window_pane_resizes,
+        bufferevent, colour_palette, grid_cell, input_ctx, layout_cell, options, utf8_data,
+        window_mode_entry, window_pane_offset, window_pane_resizes,
     },
 };
 
@@ -27,7 +27,7 @@ bitflags! {
 pub struct Pane {
     pub(crate) id: c_uint,
     active_point: c_uint,
-    window: *mut crate::tmux_sys::window,
+    window: *mut Window,
     options: *mut options,
     layout_cell: *mut layout_cell,
     saved_layout_cell: *mut layout_cell,
@@ -75,4 +75,62 @@ pub struct Pane {
     pub(crate) entry: tailq::Entry<Self>,
     pub(crate) sentry: tailq::Entry<Self>,
     pub(crate) tree_entry: rb::Entry<Self>,
+}
+
+bitflags! {
+    #[repr(C)]
+    pub(crate) struct WindowFlags: c_int {
+        const RESIZE = 1 << 5;
+    }
+
+}
+
+/// Window structure.
+#[repr(C)]
+pub struct Window {
+    pub(crate) id: c_uint,
+    pub(crate) latest: *mut c_void,
+    name: *mut c_char,
+    name_event: crate::tmux_sys::event,
+    name_time: libc::timeval,
+    alerts_timer: crate::tmux_sys::event,
+    offset_timer: crate::tmux_sys::event,
+    activity_time: libc::timeval,
+    pub(crate) active: *mut Pane,
+    last_panes: MaybeUninit<tailq::Head<Pane, { core::mem::offset_of!(Pane, sentry) }>>,
+    pub(crate) panes: MaybeUninit<tailq::Head<Pane, { core::mem::offset_of!(Pane, entry) }>>,
+    lastlayout: c_int,
+    layout_root: *mut layout_cell,
+    saved_layout_root: *mut layout_cell,
+    old_layout: *mut c_char,
+    sx: c_uint,
+    sy: c_uint,
+    manual_sx: c_uint,
+    manual_sy: c_uint,
+    xpixel: c_uint,
+    ypixel: c_uint,
+    pub(crate) new_sx: c_uint,
+    pub(crate) new_sy: c_uint,
+    pub(crate) new_xpixel: c_uint,
+    pub(crate) new_ypixel: c_uint,
+    fill_character: *mut utf8_data,
+    pub(crate) flags: WindowFlags,
+    alerts_queued: c_int,
+    alerts_entry: tailq::Entry<Self>,
+    pub(crate) options: *mut options,
+    references: c_uint,
+    pub(crate) winlinks: MaybeUninit<tailq::Head<Winlink, { offset_of!(Winlink, wentry) }>>,
+    pub(crate) entry: rb::Entry<Self>,
+}
+
+/// Entry on local window list.
+#[repr(C)]
+pub struct Winlink {
+    idx: c_int,
+    pub(crate) session: *mut crate::tmux_sys::session,
+    pub(crate) window: *mut Window,
+    flags: c_int,
+    entry: rb::Entry<Self>,
+    sentry: tailq::Entry<Self>,
+    pub(crate) wentry: tailq::Entry<Self>,
 }
