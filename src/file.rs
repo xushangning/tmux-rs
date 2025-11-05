@@ -10,11 +10,29 @@ use core::{
 use log::debug;
 
 use crate::{
-    compat::imsg::IMsg,
-    tmux_sys::{
-        bufferevent_write, client_file, client_files, client_files_RB_FIND, msg_write_data,
-    },
+    compat::{imsg::IMsg, tree::rb},
+    tmux_sys::{bufferevent_write, client_file, client_files, msg_write_data},
 };
+
+impl Ord for client_file {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.stream.cmp(&other.stream)
+    }
+}
+
+impl PartialOrd for client_file {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for client_file {
+    fn eq(&self, other: &Self) -> bool {
+        self.stream == other.stream
+    }
+}
+
+impl Eq for client_file {}
 
 /// Handle a file write data message (client).
 pub(crate) fn write_data(files: &mut client_files, imsg: &mut IMsg) {
@@ -30,8 +48,11 @@ pub(crate) fn write_data(files: &mut client_files, imsg: &mut IMsg) {
             .cast::<c_int>()
             .write(msg.as_mut().unwrap().stream);
     }
-    let Some(cf) = (unsafe { client_files_RB_FIND(files, find.as_mut_ptr()).as_mut() }) else {
-        panic!("unknown stream number");
+    let cf = unsafe {
+        mem::transmute::<_, &rb::Head<client_file, { offset_of!(client_file, entry) }>>(files)
+            .get(find.assume_init_ref())
+            .expect("unknown stream number")
+            .as_mut()
     };
     let size = msg_len - unsafe { mem::size_of_val_raw(msg) };
     debug!("write {size} to file {}", cf.stream);

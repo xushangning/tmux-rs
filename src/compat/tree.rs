@@ -1,5 +1,6 @@
 pub mod rb {
     use core::{ffi::c_int, ptr::NonNull};
+    use std::cmp::Ordering;
 
     #[repr(C)]
     pub struct Head<T, const OFFSET: usize> {
@@ -47,6 +48,29 @@ pub mod rb {
         fn next(&mut self) -> Option<Self::Item> {
             self.current
                 .inspect(|&current| self.current = Entry::successor::<OFFSET>(current))
+        }
+    }
+
+    impl<T: Ord, const OFFSET: usize> Head<T, OFFSET> {
+        pub unsafe fn get(&self, value: &T) -> Option<NonNull<T>> {
+            let mut root_ptr = self.root;
+            while let Some(root) = root_ptr {
+                unsafe {
+                    let entry = Entry::new::<OFFSET>(root).as_mut();
+                    root_ptr = match value.cmp(root.as_ref()) {
+                        Ordering::Less => NonNull::new(entry.left),
+                        Ordering::Greater => NonNull::new(entry.right),
+                        Ordering::Equal => return Some(root),
+                    };
+                }
+            }
+
+            None
+        }
+
+        /// Finds the node with the same key as elm
+        pub unsafe fn find(&self, elm: &T) -> Option<NonNull<T>> {
+            unsafe { self.get(elm) }
         }
     }
 
