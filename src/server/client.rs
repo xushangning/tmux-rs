@@ -42,17 +42,31 @@ use crate::{
 
 /// Set client key table.
 pub(crate) fn set_key_table(c: &mut Client, mut name: *const c_char) {
-    unsafe {
-        if name.is_null() {
-            name = crate::tmux_sys::server_client_get_key_table(c);
-        }
+    if name.is_null() {
+        name = get_key_table(c);
+    }
 
+    unsafe {
         crate::tmux_sys::key_bindings_unref_table(c.keytable);
         c.keytable = crate::tmux_sys::key_bindings_get_table(name, 1);
         let keytable = c.keytable.as_mut().unwrap();
         keytable.references += 1;
         Errno::result(gettimeofday(&mut keytable.activity_time, ptr::null_mut()))
             .expect("gettimeofday failed");
+    }
+}
+
+/// Get default key table.
+pub(crate) fn get_key_table(c: &mut Client) -> *const c_char {
+    let Some(s) = (unsafe { c.session.as_mut() }) else {
+        return c"root".as_ptr();
+    };
+
+    let name = unsafe { options_get_string(s.options, c"key-table".as_ptr()) };
+    if unsafe { *name } == 0 {
+        c"root".as_ptr()
+    } else {
+        name
     }
 }
 
