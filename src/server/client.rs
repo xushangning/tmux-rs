@@ -7,7 +7,7 @@ use core::{
 };
 use std::os::{fd::IntoRawFd, unix::net::UnixStream};
 
-use libc::{pid_t, timeval};
+use libc::{gettimeofday, pid_t, timeval};
 use log::debug;
 use nix::errno::Errno;
 
@@ -40,6 +40,22 @@ use crate::{
     window::{Pane, PaneFlags, Window, WindowFlags},
 };
 
+/// Set client key table.
+pub(crate) fn set_key_table(c: &mut Client, mut name: *const c_char) {
+    unsafe {
+        if name.is_null() {
+            name = crate::tmux_sys::server_client_get_key_table(c);
+        }
+
+        crate::tmux_sys::key_bindings_unref_table(c.keytable);
+        c.keytable = crate::tmux_sys::key_bindings_get_table(name, 1);
+        let keytable = c.keytable.as_mut().unwrap();
+        keytable.references += 1;
+        Errno::result(gettimeofday(&mut keytable.activity_time, ptr::null_mut()))
+            .expect("gettimeofday failed");
+    }
+}
+
 /// Create a new client.
 pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     sock.set_nonblocking(true).unwrap();
@@ -60,7 +76,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
         )
     };
 
-    Errno::result(unsafe { libc::gettimeofday(&mut c.creation_time, ptr::null_mut()) })
+    Errno::result(unsafe { gettimeofday(&mut c.creation_time, ptr::null_mut()) })
         .expect("gettimeofday failed");
     c.activity_time = c.creation_time.clone();
 
@@ -132,9 +148,7 @@ extern "C" fn repeat_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
     let c = unsafe { (data as *mut Client).as_mut() }.unwrap();
 
     if c.flags.intersects(ClientFlags::REPEAT) {
-        unsafe {
-            crate::tmux_sys::server_client_set_key_table(c, ptr::null_mut());
-        }
+        set_key_table(c, ptr::null_mut());
         c.flags.remove(ClientFlags::REPEAT);
         unsafe {
             crate::tmux_sys::server_status_client(c);
@@ -1032,7 +1046,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 return;
             }
 
-            Errno::result(unsafe { libc::gettimeofday(&mut c.activity_time, ptr::null_mut()) })
+            Errno::result(unsafe { gettimeofday(&mut c.activity_time, ptr::null_mut()) })
                 .expect("gettimeofday failed");
 
             unsafe {
