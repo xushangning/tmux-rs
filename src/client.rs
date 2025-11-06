@@ -225,7 +225,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
                     }
                     cmd_list_free(pr.cmdlist);
                 }
-                _ => libc::free(pr.error as *mut c_void),
+                _ => libc::free(pr.error.cast()),
             };
         }
     }
@@ -290,9 +290,9 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
             tty_term_read_list(
                 CString::new(termnam.as_bytes()).unwrap().as_ptr(),
                 io::stdin().as_raw_fd(),
-                &raw mut caps,
-                &raw mut ncaps,
-                &raw mut cause,
+                &mut caps,
+                &mut ncaps,
+                &mut cause,
             )
         } != 0
     {

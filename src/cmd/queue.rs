@@ -60,7 +60,7 @@ pub(crate) fn get_callback1(name: &str, cb: cmdq_cb, data: *mut c_void) -> *mut 
     let item = unsafe { xcalloc(1, mem::size_of::<Item>()) }.cast::<Item>();
     unsafe {
         xasprintf(
-            &raw mut (*item).name,
+            &mut (*item).name,
             c"[%s/%p]".as_ptr(),
             CString::new(name.as_bytes()).unwrap().as_ptr(),
             item,

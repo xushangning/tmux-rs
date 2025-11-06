@@ -74,7 +74,7 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
     let peer = unsafe { &mut *(arg as *mut Peer) };
 
     unsafe {
-        if !peer.flags.contains(PeerFlag::BAD) && (events & EV_READ as i16) != 0 {
+        if !peer.flags.intersects(PeerFlag::BAD) && (events & EV_READ as i16) != 0 {
             if imsgbuf_read(&mut peer.ibuf) != 1 {
                 peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
                 return;
@@ -135,21 +135,21 @@ fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
 
 fn update_event(peer: &mut Peer) {
     unsafe {
-        event_del(&raw mut peer.event);
+        event_del(&mut peer.event);
 
         let mut events = EV_READ as c_short;
-        if imsgbuf_queuelen(&raw mut peer.ibuf) > 0 {
+        if imsgbuf_queuelen(&mut peer.ibuf) > 0 {
             events |= EV_WRITE as c_short;
         }
         event_set(
-            &raw mut peer.event,
+            &mut peer.event,
             peer.ibuf.fd,
             events,
             Some(event_cb),
             peer as *mut _ as *mut c_void,
         );
 
-        event_add(&raw mut peer.event, ptr::null_mut());
+        event_add(&mut peer.event, ptr::null_mut());
     }
 }
 
@@ -180,7 +180,7 @@ pub(crate) fn start(name: &str) -> NonNull<Proc> {
     let socket_path = Path::new(OsStr::from_bytes(
         unsafe { CStr::from_ptr(crate::tmux_sys::socket_path) }.to_bytes(),
     ));
-    crate::compat::setproctitle(format!("{name} ({})", socket_path.display()).as_ref());
+    crate::compat::setproctitle(&format!("{name} ({})", socket_path.display()));
 
     debug!(
         "{name} started ({}): version {}, socket {}, protocol {}",

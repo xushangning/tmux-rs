@@ -14,7 +14,7 @@ use std::{
     ffi::{CString, OsStr},
     fs::{self, File},
     os::{
-        fd::AsRawFd,
+        fd::{AsRawFd, FromRawFd, RawFd},
         unix::{
             ffi::OsStrExt,
             fs::PermissionsExt,
@@ -51,9 +51,9 @@ use crate::{
         event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
         options_get_number, options_set_number, proc_clear_signals, proc_loop, proc_set_signals,
-        proc_toggle_log, server_acl_init, server_acl_join, server_client_create,
-        server_client_lost, server_destroy_pane, session_destroy, status_prompt_save_history,
-        tmuxproc, tty_create_log, utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
+        proc_toggle_log, server_acl_init, server_acl_join, server_client_lost, server_destroy_pane,
+        session_destroy, status_prompt_save_history, tmuxproc, tty_create_log,
+        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
     window::PaneFlags,
 };
@@ -116,7 +116,7 @@ extern "C" fn tidy_event(_fd: c_int, _events: c_short, _data: *mut c_void) {
         tv_usec: 0,
     };
     unsafe {
-        evtimer_add(EV_TIDY.as_mut_ptr(), &raw mut tv);
+        evtimer_add(EV_TIDY.as_mut_ptr(), &mut tv);
     }
 }
 
@@ -177,7 +177,7 @@ pub(crate) fn start(
         crate::tmux_sys::sessions = Default::default();
         key_bindings_init();
         tailq::Head::new(Pin::new_unchecked(&mut crate::tmux_sys::message_log));
-        libc::gettimeofday(&raw mut crate::tmux_sys::start_time, ptr::null_mut());
+        libc::gettimeofday(&mut crate::tmux_sys::start_time, ptr::null_mut());
     }
 
     let mut cause: Option<anyhow::Error> = None;
@@ -196,7 +196,7 @@ pub(crate) fn start(
     }
     unsafe {
         if !flags.intersects(ClientFlags::NO_FORK) {
-            c = crate::server::client::create(fd.unwrap()).as_ptr();
+            c = client::create(fd.unwrap()).as_ptr();
         } else {
             options_set_number(crate::tmux_sys::global_options, c"exit-empty".as_ptr(), 0);
         }
@@ -223,7 +223,7 @@ pub(crate) fn start(
             tv_sec: 3600,
             tv_usec: 0,
         };
-        evtimer_add(EV_TIDY.as_mut_ptr(), &raw mut tv);
+        evtimer_add(EV_TIDY.as_mut_ptr(), &mut tv);
 
         server_acl_init();
 
@@ -363,7 +363,7 @@ fn update_socket() {
 }
 
 /// Callback for server socket.
-extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
+extern "C" fn accept(fd: RawFd, events: c_short, _data: *mut c_void) {
     use Errno::*;
 
     add_accept(0);
@@ -385,13 +385,14 @@ extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
     };
 
     unsafe {
+        let sock = UnixStream::from_raw_fd(new_fd);
         if EXIT {
-            libc::close(new_fd);
+            return;
         }
-        let c = server_client_create(new_fd);
+        let c = client::create(sock).as_mut();
         if server_acl_join(c) == 0 {
-            (*c).exit_message = xstrdup(c"access not allowed".as_ptr());
-            (*c).flags |= ClientFlags::EXIT;
+            c.exit_message = xstrdup(c"access not allowed".as_ptr());
+            c.flags |= ClientFlags::EXIT;
         }
     }
 }
@@ -399,9 +400,8 @@ extern "C" fn accept(fd: c_int, events: c_short, _data: *mut c_void) {
 /// Add accept event. If timeout is nonzero, add as a timeout instead of a read
 /// event - used to backoff when running out of file descriptors.
 fn add_accept(timeout: c_int) {
-    let listener = match unsafe { LISTENER.as_ref() } {
-        Some(listener) => listener,
-        None => return,
+    let Some(listener) = (unsafe { LISTENER.as_ref() }) else {
+        return;
     };
 
     unsafe {
@@ -422,7 +422,7 @@ fn add_accept(timeout: c_int) {
             event_set(
                 EV_ACCEPT.as_mut_ptr(),
                 listener.as_raw_fd(),
-                EV_READ.try_into().unwrap(),
+                crate::tmux_sys::EV_TIMEOUT.try_into().unwrap(),
                 Some(accept),
                 ptr::null_mut(),
             );
@@ -470,7 +470,7 @@ extern "C" fn signal(sig: c_int) {
 fn child_signal() {
     loop {
         let mut status: c_int = 0;
-        let pid = unsafe { libc::waitpid(WAIT_ANY, &raw mut status, WNOHANG | WUNTRACED) };
+        let pid = unsafe { libc::waitpid(WAIT_ANY, &mut status, WNOHANG | WUNTRACED) };
         if pid == -1 {
             let err = Errno::last();
             match err {

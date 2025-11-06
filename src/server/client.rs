@@ -7,7 +7,7 @@ use core::{
 };
 use std::os::{fd::IntoRawFd, unix::net::UnixStream};
 
-use libc::pid_t;
+use libc::{pid_t, timeval};
 use log::debug;
 use nix::errno::Errno;
 
@@ -60,7 +60,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
         )
     };
 
-    Errno::result(unsafe { libc::gettimeofday(&raw mut c.creation_time, ptr::null_mut()) })
+    Errno::result(unsafe { libc::gettimeofday(&mut c.creation_time, ptr::null_mut()) })
         .expect("gettimeofday failed");
     c.activity_time = c.creation_time.clone();
 
@@ -91,16 +91,8 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
         c.keytable = key_bindings_get_table(c"root".as_ptr(), 1);
         (*c.keytable).references += 1;
 
-        evtimer_set(
-            &raw mut c.repeat_timer,
-            Some(repeat_timer),
-            ret.as_ptr().cast(),
-        );
-        evtimer_set(
-            &raw mut c.click_timer,
-            Some(click_timer),
-            ret.as_ptr().cast(),
-        );
+        evtimer_set(&mut c.repeat_timer, Some(repeat_timer), ret.as_ptr().cast());
+        evtimer_set(&mut c.click_timer, Some(click_timer), ret.as_ptr().cast());
     }
 
     unsafe {
@@ -258,7 +250,7 @@ fn check_pane_resize(wp: &mut Pane) {
     //   size. We must resize at least twice to force the application to
     //   redraw. So apply the first and leave the last on the queue for
     //   next time.
-    let mut tv = libc::timeval {
+    let mut tv = timeval {
         tv_sec: 0,
         tv_usec: 250_000,
     };
@@ -597,7 +589,7 @@ fn check_redraw(c: &mut Client) {
             unsafe {
                 evtimer_add(
                     ev,
-                    &mut libc::timeval {
+                    &mut timeval {
                         tv_sec: 0,
                         tv_usec: 1_000,
                     },
@@ -999,8 +991,8 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
             if !c.flags.intersects(ClientFlags::CONTROL) {
                 update_latest(c);
                 unsafe {
-                    tty_resize(&raw mut c.tty);
-                    tty_repeat_requests(&raw mut c.tty);
+                    tty_resize(&mut c.tty);
+                    tty_repeat_requests(&mut c.tty);
                     recalculate_sizes();
                     match c.overlay_resize.as_ref() {
                         None => server_client_clear_overlay(c),
@@ -1021,7 +1013,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
             unsafe {
                 server_client_set_session(c, ptr::null_mut());
                 recalculate_sizes();
-                tty_close(&raw mut c.tty);
+                tty_close(&mut c.tty);
                 crate::proc::send(&mut *c.peer, Msg::Exited, None, &[]);
             }
         }
@@ -1040,15 +1032,15 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 return;
             }
 
-            Errno::result(unsafe { libc::gettimeofday(&raw mut c.activity_time, ptr::null_mut()) })
+            Errno::result(unsafe { libc::gettimeofday(&mut c.activity_time, ptr::null_mut()) })
                 .expect("gettimeofday failed");
 
             unsafe {
-                tty_start_tty(&raw mut c.tty);
+                tty_start_tty(&mut c.tty);
                 server_redraw_client(c);
                 recalculate_sizes();
 
-                session_update_activity(c.session, &raw mut c.activity_time);
+                session_update_activity(c.session, &mut c.activity_time);
             }
         }
         Shell => {
@@ -1059,13 +1051,13 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
             dispatch_shell(c);
         }
         WriteReady => unsafe {
-            file_write_ready(&raw mut c.files, imsg);
+            file_write_ready(&mut c.files, imsg);
         },
         Read => unsafe {
-            file_read_data(&raw mut c.files, imsg);
+            file_read_data(&mut c.files, imsg);
         },
         ReadDone => unsafe {
-            file_read_done(&raw mut c.files, imsg);
+            file_read_done(&mut c.files, imsg);
         },
         _ => {}
     }
@@ -1098,7 +1090,7 @@ extern "C" fn command_done(
             }
         }
         unsafe {
-            tty_send_requests(&raw mut c.tty);
+            tty_send_requests(&mut c.tty);
         }
     }
     cmd_retval_CMD_RETURN_NORMAL
@@ -1349,7 +1341,7 @@ fn dispatch_identify(c: &mut Client, imsg: &IMsg) {
             c.name = xstrdup(c.ttyname);
         } else {
             xasprintf(
-                (&raw mut c.name) as *mut *mut c_char,
+                (&raw mut c.name).cast(),
                 c"client-%ld".as_ptr(),
                 c.pid as c_long,
             );
@@ -1369,11 +1361,11 @@ fn dispatch_identify(c: &mut Client, imsg: &IMsg) {
         if c.flags.intersects(ClientFlags::CONTROL) {
             control_start(c);
         } else if c.fd != -1 {
-            if tty_init(&raw mut c.tty, c) != 0 {
+            if tty_init(&mut c.tty, c) != 0 {
                 libc::close(c.fd);
                 c.fd = -1;
             } else {
-                tty_resize(&raw mut c.tty);
+                tty_resize(&mut c.tty);
                 c.flags |= ClientFlags::TERMINAL;
             }
             libc::close(c.out_fd);

@@ -206,7 +206,7 @@ fn main() {
     let mut feat: c_int = 0;
     if cli.force_256 {
         unsafe {
-            tty_add_features(&raw mut feat, c"256".as_ptr(), c":,".as_ptr());
+            tty_add_features(&mut feat, c"256".as_ptr(), c":,".as_ptr());
         }
     }
     if let Some(command) = cli.sh_command.as_ref() {
@@ -258,7 +258,8 @@ fn main() {
         tmux_rs::log::add_level();
     }
 
-    if !cli.command.is_empty() && (cli.sh_command.is_some() || flags.contains(ClientFlags::NO_FORK))
+    if !cli.command.is_empty()
+        && (cli.sh_command.is_some() || flags.intersects(ClientFlags::NO_FORK))
     {
         Cli::command().print_help().unwrap();
         process::exit(1);
