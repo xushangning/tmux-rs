@@ -5,6 +5,14 @@ use std::io::Write;
 
 use log::debug;
 
+#[repr(C)]
+pub enum Retval {
+    Error = -1,
+    Normal = 0,
+    Wait,
+    Stop,
+}
+
 /// Log an argument vector.
 pub(crate) fn log_argv<'a>(args: impl Iterator<Item = &'a String>, prefix: &str) {
     for (i, arg) in args.enumerate() {

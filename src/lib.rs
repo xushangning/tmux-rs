@@ -75,6 +75,7 @@ bitflags! {
             | Self::REDRAW_OVERLAY.bits()
             | Self::REDRAW_PANES.bits()
             | Self::REDRAW_SCROLLBARS.bits();
+        const UNATTACHED = Self::DEAD.bits() | Self::SUSPENDED.bits() | Self::EXIT.bits();
 
         const _ = !0;
     }

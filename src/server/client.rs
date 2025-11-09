@@ -24,17 +24,16 @@ use crate::{
     tmux_sys::{
         _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, TTY_BLOCK, WINDOW_SIZE_LATEST,
         cfg_finished, checkshell, client_file, clients, cmd_list_all_have, cmd_list_copy,
-        cmd_list_free, cmd_parse_from_arguments, cmd_retval_CMD_RETURN_NORMAL, cmdq_append,
-        cmdq_get_callback1, cmdq_get_command, control_ready, control_start, environ_put,
-        evbuffer_get_length, event_initialized, event_pending, file_read_data, file_read_done,
-        file_write_ready, global_options, global_s_options, imsg_get_fd, key_bindings_get_table,
-        key_event, notify_client, options_get_command, options_get_number, options_get_string,
-        proc_add_peer, proc_kill_peer, recalculate_size, recalculate_sizes,
-        server_client_clear_overlay, server_client_handle_key, server_client_lost,
-        server_client_set_session, server_redraw_client, session_update_activity, start_cfg,
-        status_at_line, status_init, status_line_size, tty_close, tty_get_features, tty_init,
-        tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty, tty_update_mode,
-        xasprintf, xcalloc, xreallocarray, xstrdup,
+        cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1, cmdq_get_command,
+        control_ready, control_start, environ_put, evbuffer_get_length, event_initialized,
+        event_pending, file_read_data, file_read_done, file_write_ready, global_options,
+        global_s_options, imsg_get_fd, key_bindings_get_table, key_event, notify_client,
+        options_get_command, options_get_number, options_get_string, proc_add_peer, proc_kill_peer,
+        recalculate_size, recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
+        server_client_lost, server_client_set_session, server_redraw_client,
+        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
+        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
+        tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     util,
     window::{Pane, PaneFlags, Window, WindowFlags},
@@ -1095,18 +1094,18 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
 extern "C" fn read_only(
     item: *mut crate::tmux_sys::cmdq_item,
     _data: *mut c_void,
-) -> crate::tmux_sys::cmd_retval {
+) -> crate::cmd::Retval {
     unsafe {
         crate::tmux_sys::cmdq_error(item, c"client is read-only".as_ptr());
     }
-    crate::tmux_sys::cmd_retval_CMD_RETURN_ERROR
+    crate::cmd::Retval::Error
 }
 
 /// Callback when command is done.
 extern "C" fn command_done(
     item: *mut crate::tmux_sys::cmdq_item,
     _data: *mut c_void,
-) -> crate::tmux_sys::cmd_retval {
+) -> crate::cmd::Retval {
     let c = unsafe { crate::tmux_sys::cmdq_get_client(item).as_mut().unwrap() };
 
     if !c.flags.intersects(ClientFlags::ATTACHED) {
@@ -1121,7 +1120,7 @@ extern "C" fn command_done(
             tty_send_requests(&mut c.tty);
         }
     }
-    cmd_retval_CMD_RETURN_NORMAL
+    crate::cmd::Retval::Normal
 }
 
 /// Handle command message.

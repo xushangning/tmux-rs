@@ -11,8 +11,8 @@ use crate::{
     ClientFlags,
     compat::queue::tailq,
     tmux_sys::{
-        cmd_find_state, cmd_list, cmd_retval, cmdq_cb, cmdq_list, cmdq_new_state, cmdq_state,
-        xasprintf, xcalloc,
+        cmd_find_state, cmd_list, cmdq_cb, cmdq_list, cmdq_new_state, cmdq_state, xasprintf,
+        xcalloc,
     },
 };
 
@@ -78,11 +78,11 @@ pub(crate) fn get_callback1(name: &str, cb: cmdq_cb, data: *mut c_void) -> *mut 
 }
 
 /// Generic error callback.
-extern "C" fn error_callback(item: *mut Item, data: *mut c_void) -> cmd_retval {
+extern "C" fn error_callback(item: *mut Item, data: *mut c_void) -> crate::cmd::Retval {
     error(unsafe { item.as_mut().unwrap() }, &mut unsafe {
         Box::from_raw(data.cast::<Box<str>>())
     });
-    crate::tmux_sys::cmd_retval_CMD_RETURN_NORMAL
+    crate::cmd::Retval::Normal
 }
 
 /// Get an error callback for the command queue.
