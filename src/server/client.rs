@@ -817,7 +817,6 @@ fn reset_state(c: &mut Client) {
     c.tty.flags &= !(TTY_BLOCK as c_int);
 
     // Get mode from overlay if any, else from screen.
-    let wp = unsafe { crate::tmux_sys::server_client_get_pane(c).as_ref().unwrap() };
     let mut cx: c_uint = 0;
     let mut cy: c_uint = 0;
     let s = if c.overlay_draw.is_some() {
@@ -826,7 +825,7 @@ fn reset_state(c: &mut Client) {
             None => ptr::null_mut(),
         }
     } else if c.prompt_string.is_null() {
-        wp.screen
+        c.pane().unwrap().screen
     } else {
         c.status.active
     };
@@ -871,6 +870,7 @@ fn reset_state(c: &mut Client) {
             crate::tmux_sys::tty_window_offset(&mut c.tty, &mut ox, &mut oy, &mut sx, &mut sy);
         }
         let s = unsafe { s.as_ref().unwrap() };
+        let wp = c.pane().unwrap();
         if wp.xoff + s.cx >= ox
             && wp.xoff + s.cx <= ox + sx
             && wp.yoff + s.cy >= oy
@@ -1428,5 +1428,33 @@ fn dispatch_shell(c: &mut Client) {
         );
 
         proc_kill_peer(c.peer);
+    }
+}
+
+impl Client {
+    /// Get client active pane.
+    pub(crate) fn pane(&mut self) -> Option<&mut Pane> {
+        let w = unsafe {
+            self.session
+                .as_mut()?
+                .curw
+                .as_mut()
+                .unwrap()
+                .window
+                .as_mut()
+                .unwrap()
+        };
+
+        unsafe {
+            if self.flags.intersects(ClientFlags::ACTIVE_PANE)
+                && let Some(cw) =
+                    crate::tmux_sys::server_client_get_client_window(self, w.id).as_mut()
+            {
+                cw.pane
+            } else {
+                w.active
+            }
+            .as_mut()
+        }
     }
 }

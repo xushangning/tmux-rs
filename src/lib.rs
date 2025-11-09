@@ -66,6 +66,7 @@ bitflags! {
         const START_SERVER = 1 << 28;
         const REDRAW_PANES = 1 << 29;
         const NO_FORK = 1 << 30;
+        const ACTIVE_PANE = 1 << 31;
         const CONTROL_WAIT_EXIT = 1 << 33;
         const REDRAW_SCROLLBARS = 1 << 38;
         const ALL_REDRAW_FLAGS = Self::REDRAW_WINDOW.bits()
