@@ -1,7 +1,8 @@
 use core::{
+    cmp::Ordering,
     convert::TryInto,
     ffi::{CStr, c_char, c_int, c_long, c_short, c_uint, c_void},
-    mem::{self, MaybeUninit},
+    mem::{self, MaybeUninit, offset_of},
     pin::Pin,
     ptr::{self, NonNull},
 };
@@ -23,21 +24,42 @@ use crate::{
     protocol::Msg,
     tmux_sys::{
         _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, TTY_BLOCK, WINDOW_SIZE_LATEST,
-        cfg_finished, checkshell, client_file, clients, cmd_list_all_have, cmd_list_copy,
-        cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1, cmdq_get_command,
-        control_ready, control_start, environ_put, evbuffer_get_length, event_initialized,
-        event_pending, file_read_data, file_read_done, file_write_ready, global_options,
-        global_s_options, imsg_get_fd, key_bindings_get_table, key_event, notify_client,
-        options_get_command, options_get_number, options_get_string, proc_add_peer, proc_kill_peer,
-        recalculate_size, recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
-        server_client_lost, server_client_set_session, server_redraw_client,
-        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
-        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
-        tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray, xstrdup,
+        cfg_finished, checkshell, client_file, client_window, clients, cmd_list_all_have,
+        cmd_list_copy, cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1,
+        cmdq_get_command, control_ready, control_start, environ_put, evbuffer_get_length,
+        event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
+        global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
+        notify_client, options_get_command, options_get_number, options_get_string, proc_add_peer,
+        proc_kill_peer, recalculate_size, recalculate_sizes, server_client_clear_overlay,
+        server_client_handle_key, server_client_lost, server_client_set_session,
+        server_redraw_client, session_update_activity, start_cfg, status_at_line, status_init,
+        status_line_size, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
+        tty_send_requests, tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray,
+        xstrdup,
     },
     util,
     window::{Pane, PaneFlags, Window, WindowFlags},
 };
+
+impl Ord for client_window {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.window.cmp(&other.window)
+    }
+}
+
+impl PartialOrd for client_window {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for client_window {
+    fn eq(&self, other: &Self) -> bool {
+        self.window == other.window
+    }
+}
+
+impl Eq for client_window {}
 
 /// Set client key table.
 pub(crate) fn set_key_table(c: &mut Client, mut name: *const c_char) {
@@ -1432,6 +1454,20 @@ fn dispatch_shell(c: &mut Client) {
 }
 
 impl Client {
+    /// Get client window.
+    pub(crate) fn get_client_window(&mut self, id: c_uint) -> Option<&mut client_window> {
+        unsafe {
+            let mut cw = MaybeUninit::<client_window>::uninit();
+            cw.as_mut_ptr()
+                .byte_add(offset_of!(client_window, window))
+                .cast::<c_uint>()
+                .write(id);
+            self.windows
+                .get(cw.assume_init_ref())
+                .map(|mut non_null| non_null.as_mut())
+        }
+    }
+
     /// Get client active pane.
     pub(crate) fn pane(&mut self) -> Option<&mut Pane> {
         let w = unsafe {
@@ -1447,8 +1483,7 @@ impl Client {
 
         unsafe {
             if self.flags.intersects(ClientFlags::ACTIVE_PANE)
-                && let Some(cw) =
-                    crate::tmux_sys::server_client_get_client_window(self, w.id).as_mut()
+                && let Some(cw) = self.get_client_window(w.id)
             {
                 cw.pane
             } else {
