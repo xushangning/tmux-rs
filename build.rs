@@ -52,6 +52,8 @@ fn main() {
         .raw_line("pub(crate) type client = crate::Client;")
         .blocklist_type("cmd_retval")
         .raw_line("type cmd_retval = crate::cmd::Retval;")
+        .blocklist_type("tty")
+        .raw_line("type tty = crate::tty::Tty;")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()

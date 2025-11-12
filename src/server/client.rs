@@ -23,19 +23,20 @@ use crate::{
     libevent::{evtimer_add, evtimer_set},
     protocol::Msg,
     tmux_sys::{
-        _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, TTY_BLOCK, WINDOW_SIZE_LATEST,
-        cfg_finished, checkshell, client_file, client_window, clients, cmd_list_all_have,
-        cmd_list_copy, cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1,
-        cmdq_get_command, control_ready, control_start, environ_put, evbuffer_get_length,
-        event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
-        global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
-        notify_client, options_get_command, options_get_number, options_get_string, proc_add_peer,
-        proc_kill_peer, recalculate_size, recalculate_sizes, server_client_clear_overlay,
-        server_client_handle_key, server_client_lost, server_redraw_client,
-        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
-        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
-        tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray, xstrdup,
+        _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
+        checkshell, client_file, client_window, clients, cmd_list_all_have, cmd_list_copy,
+        cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1, cmdq_get_command,
+        control_ready, control_start, environ_put, evbuffer_get_length, event_initialized,
+        event_pending, file_read_data, file_read_done, file_write_ready, global_options,
+        global_s_options, imsg_get_fd, key_bindings_get_table, key_event, notify_client,
+        options_get_command, options_get_number, options_get_string, proc_add_peer, proc_kill_peer,
+        recalculate_size, recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
+        server_client_lost, server_redraw_client, session_update_activity, start_cfg,
+        status_at_line, status_init, status_line_size, tty_close, tty_get_features, tty_init,
+        tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty, tty_update_mode,
+        xasprintf, xcalloc, xreallocarray, xstrdup,
     },
+    tty::TtyFlags,
     util,
     window::{Pane, PaneFlags, Window, WindowFlags},
 };
@@ -541,8 +542,6 @@ fn check_modes(c: &mut Client) {
 
 /// Check for client redraws.
 fn check_redraw(c: &mut Client) {
-    use crate::tmux_sys::{TTY_FREEZE, TTY_NOCURSOR};
-
     static mut EV: MaybeUninit<crate::tmux_sys::event> = MaybeUninit::uninit();
 
     if c.flags
@@ -679,8 +678,9 @@ fn check_redraw(c: &mut Client) {
         debug!("{name}: redraw needed");
     }
 
-    let tty_flags = c.tty.flags & (TTY_BLOCK | TTY_FREEZE | TTY_NOCURSOR) as c_int;
-    c.tty.flags = c.tty.flags & !(TTY_BLOCK | TTY_FREEZE) as c_int | TTY_NOCURSOR as c_int;
+    let tty_flags = c.tty.flags & (TtyFlags::BLOCK | TtyFlags::FREEZE | TtyFlags::NO_CURSOR);
+    c.tty.flags.remove(TtyFlags::BLOCK | TtyFlags::FREEZE);
+    c.tty.flags |= TtyFlags::NO_CURSOR;
 
     if !c.flags.intersects(ClientFlags::REDRAW_WINDOW) {
         // If not redrawing the entire window, check whether each pane
@@ -741,9 +741,11 @@ fn check_redraw(c: &mut Client) {
 
     let tty = &mut c.tty;
     unsafe {
-        tty.flags = tty.flags & !TTY_NOCURSOR as c_int | tty_flags & TTY_NOCURSOR as c_int;
+        tty.flags = tty.flags & !TtyFlags::NO_CURSOR | tty_flags & TtyFlags::NO_CURSOR;
         tty_update_mode(tty, tty.mode, ptr::null_mut());
-        tty.flags = tty.flags & !(TTY_BLOCK | TTY_FREEZE | TTY_NOCURSOR) as c_int | tty_flags;
+        tty.flags
+            .remove(TtyFlags::BLOCK | TtyFlags::FREEZE | TtyFlags::NO_CURSOR);
+        tty.flags |= tty_flags;
     }
 
     c.flags
@@ -834,8 +836,8 @@ fn reset_state(c: &mut Client) {
     }
 
     // Disable the block flag.
-    let flags = c.tty.flags & TTY_BLOCK as c_int;
-    c.tty.flags &= !(TTY_BLOCK as c_int);
+    let flags = c.tty.flags & TtyFlags::BLOCK;
+    c.tty.flags.remove(TtyFlags::BLOCK);
 
     // Get mode from overlay if any, else from screen.
     let mut cx: c_uint = 0;

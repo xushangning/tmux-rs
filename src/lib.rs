@@ -13,6 +13,7 @@ mod protocol;
 mod server;
 pub mod tmux;
 pub mod tmux_sys;
+pub(crate) mod tty;
 pub(crate) mod util;
 pub(crate) mod window;
 
@@ -117,7 +118,7 @@ pub struct Client {
     term_caps: *mut *mut c_char,
     term_ncaps: c_uint,
     ttyname: *mut c_char,
-    tty: crate::tmux_sys::tty,
+    tty: tty::Tty,
     written: usize,
     discarded: usize,
     redraw: usize,
