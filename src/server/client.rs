@@ -31,11 +31,10 @@ use crate::{
         global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
         notify_client, options_get_command, options_get_number, options_get_string, proc_add_peer,
         proc_kill_peer, recalculate_size, recalculate_sizes, server_client_clear_overlay,
-        server_client_handle_key, server_client_lost, server_client_set_session,
-        server_redraw_client, session_update_activity, start_cfg, status_at_line, status_init,
-        status_line_size, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
-        tty_send_requests, tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray,
-        xstrdup,
+        server_client_handle_key, server_client_lost, server_redraw_client,
+        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
+        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
+        tty_start_tty, tty_update_mode, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     util,
     window::{Pane, PaneFlags, Window, WindowFlags},
@@ -1059,8 +1058,8 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                 panic!("bad MSG_EXITING size");
             }
 
+            c.set_session(ptr::null_mut());
             unsafe {
-                server_client_set_session(c, ptr::null_mut());
                 recalculate_sizes();
                 tty_close(&mut c.tty);
                 crate::proc::send(&mut *c.peer, Msg::Exited, None, &[]);
@@ -1454,6 +1453,47 @@ fn dispatch_shell(c: &mut Client) {
 }
 
 impl Client {
+    /// Set client session.
+    pub(crate) fn set_session(&mut self, s: *mut crate::tmux_sys::session) {
+        use crate::tmux_sys::window_update_focus;
+
+        let old = self.session;
+
+        if s.is_null() || self.session != s {
+            self.last_session = s;
+        }
+        self.session = s;
+        self.flags |= ClientFlags::FOCUSED;
+
+        unsafe {
+            if let Some(old) = old.as_mut()
+                && let Some(curw) = old.curw.as_mut()
+            {
+                window_update_focus(curw.window);
+            }
+            if let Some(s) = s.as_mut() {
+                recalculate_sizes();
+                window_update_focus(s.curw.as_mut().unwrap().window);
+                session_update_activity(s, ptr::null_mut());
+                crate::tmux_sys::session_theme_changed(s);
+                gettimeofday(&mut s.last_attached_time, ptr::null_mut());
+                {
+                    let curw = s.curw.as_mut().unwrap_unchecked();
+                    curw.flags &= !crate::tmux_sys::WINLINK_ALERTFLAGS as i32;
+                    curw.window.as_mut().unwrap().latest = (&raw mut *self).cast();
+                }
+                crate::tmux_sys::alerts_check_session(s);
+                crate::tmux_sys::tty_update_client_offset(self);
+                crate::tmux_sys::status_timer_start(self);
+                crate::tmux_sys::notify_client(c"client-session-changed".as_ptr(), self);
+                server_redraw_client(self);
+            }
+
+            crate::tmux_sys::server_check_unattached();
+        }
+        super::update_socket();
+    }
+
     /// Get client window.
     pub(crate) fn get_client_window(&mut self, id: c_uint) -> Option<&mut client_window> {
         unsafe {

@@ -130,7 +130,7 @@ pub struct Winlink {
     idx: c_int,
     pub(crate) session: *mut crate::tmux_sys::session,
     pub(crate) window: *mut Window,
-    flags: c_int,
+    pub(crate) flags: c_int,
     entry: rb::Entry<Self>,
     sentry: tailq::Entry<Self>,
     pub(crate) wentry: tailq::Entry<Self>,
