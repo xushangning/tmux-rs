@@ -26,15 +26,15 @@ use crate::{
         _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
         checkshell, client_file, client_window, clients, cmd_list_all_have, cmd_list_copy,
         cmd_list_free, cmd_parse_from_arguments, cmdq_append, cmdq_get_callback1, cmdq_get_command,
-        control_ready, control_start, environ_put, evbuffer_get_length, event_initialized,
-        event_pending, file_read_data, file_read_done, file_write_ready, global_options,
-        global_s_options, imsg_get_fd, key_bindings_get_table, key_event, notify_client,
-        options_get_command, options_get_number, options_get_string, proc_add_peer, proc_kill_peer,
-        recalculate_size, recalculate_sizes, server_client_clear_overlay, server_client_handle_key,
+        control_ready, control_start, environ_put, evbuffer_get_length, event_del,
+        event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
+        global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
+        notify_client, options_get_command, options_get_number, options_get_string, proc_add_peer,
+        proc_kill_peer, recalculate_size, recalculate_sizes, server_client_handle_key,
         server_client_lost, server_redraw_client, session_update_activity, start_cfg,
         status_at_line, status_init, status_line_size, tty_close, tty_get_features, tty_init,
         tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty, tty_update_mode,
-        xasprintf, xcalloc, xreallocarray, xstrdup,
+        window_update_focus, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     tty::TtyFlags,
     util,
@@ -254,7 +254,7 @@ extern "C" fn resize_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
         wp.id
     );
     unsafe {
-        crate::tmux_sys::event_del(&mut wp.resize_timer);
+        event_del(&mut wp.resize_timer);
     }
 }
 
@@ -1045,7 +1045,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
                     tty_repeat_requests(&mut c.tty);
                     recalculate_sizes();
                     match c.overlay_resize.as_ref() {
-                        None => server_client_clear_overlay(c),
+                        None => c.clear_overlay(),
                         Some(overlay_resize) => overlay_resize(c, c.overlay_data),
                     }
                     server_redraw_client(c);
@@ -1455,10 +1455,45 @@ fn dispatch_shell(c: &mut Client) {
 }
 
 impl Client {
+    /// Clear overlay mode on client.
+    pub(crate) fn clear_overlay(&mut self) {
+        if self.overlay_draw.is_none() {
+            return;
+        }
+
+        unsafe {
+            if event_initialized(&self.overlay_timer) != 0 {
+                event_del(&mut self.overlay_timer);
+            }
+        }
+
+        if let Some(overlay_free) = self.overlay_free {
+            unsafe {
+                overlay_free(self, self.overlay_data);
+            }
+        }
+
+        self.overlay_check = None;
+        self.overlay_mode = None;
+        self.overlay_draw = None;
+        self.overlay_key = None;
+        self.overlay_free = None;
+        self.overlay_resize = None;
+        self.overlay_data = ptr::null_mut();
+
+        self.tty
+            .flags
+            .remove(TtyFlags::FREEZE | TtyFlags::NO_CURSOR);
+        unsafe {
+            if let Some(s) = self.session.as_mut() {
+                window_update_focus(s.curw.as_mut().unwrap().window);
+            }
+            server_redraw_client(self);
+        }
+    }
+
     /// Set client session.
     pub(crate) fn set_session(&mut self, s: *mut crate::tmux_sys::session) {
-        use crate::tmux_sys::window_update_focus;
-
         let old = self.session;
 
         if s.is_null() || self.session != s {
