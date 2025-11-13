@@ -10,6 +10,7 @@ use std::os::{fd::IntoRawFd, unix::net::UnixStream};
 
 use libc::{gettimeofday, pid_t, timeval};
 use log::debug;
+use mbox::MBox;
 use nix::errno::Errno;
 
 use crate::{
@@ -95,19 +96,17 @@ pub(crate) fn get_key_table(c: &mut Client) -> *const c_char {
 pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     sock.set_nonblocking(true).unwrap();
 
-    let mut ret = unsafe {
-        NonNull::<Client>::new_unchecked(
-            crate::tmux_sys::xcalloc(1, mem::size_of::<Client>()).cast(),
-        )
+    let mut c = unsafe {
+        MBox::from_raw(crate::tmux_sys::xcalloc(1, mem::size_of::<Client>()).cast::<Client>())
     };
-    let c = unsafe { ret.as_mut() };
+    let c_ptr = &raw mut *c.as_mut();
     c.references = 1;
     c.peer = unsafe {
         proc_add_peer(
             crate::tmux_sys::server_proc,
             sock.into_raw_fd(),
             Some(dispatch),
-            ret.as_ptr().cast(),
+            c_ptr.cast(),
         )
     };
 
@@ -134,7 +133,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     c.theme = crate::tmux_sys::client_theme_THEME_UNKNOWN;
 
     unsafe {
-        status_init(ret.as_ptr());
+        status_init(c.as_mut());
     }
     c.flags |= ClientFlags::FOCUSED;
 
@@ -142,15 +141,16 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
         c.keytable = key_bindings_get_table(c"root".as_ptr(), 1);
         (*c.keytable).references += 1;
 
-        evtimer_set(&mut c.repeat_timer, Some(repeat_timer), ret.as_ptr().cast());
-        evtimer_set(&mut c.click_timer, Some(click_timer), ret.as_ptr().cast());
+        evtimer_set(&mut c.repeat_timer, Some(repeat_timer), c_ptr.cast());
+        evtimer_set(&mut c.click_timer, Some(click_timer), c_ptr.cast());
     }
 
     unsafe {
-        Pin::new_unchecked(crate::tmux_sys::clients.assume_init_mut()).push_back(ret);
+        Pin::new_unchecked(crate::tmux_sys::clients.assume_init_mut())
+            .push_back(MBox::into_non_null_raw(c));
     }
-    debug!("new client {:?}", ret.as_ptr());
-    ret
+    debug!("new client {:?}", c_ptr);
+    unsafe { NonNull::new_unchecked(c_ptr) }
 }
 
 /// Has the latest client changed?
