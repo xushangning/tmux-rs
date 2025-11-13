@@ -1169,7 +1169,7 @@ fn dispatch_command(c: &mut Client, imsg: &IMsg) {
     let argc = data.argc;
     let error = |c: &mut Client, cause: &str| {
         unsafe {
-            cmdq_append(c, crate::cmd::queue::get_error(cause));
+            cmdq_append(c, MBox::into_raw(crate::cmd::queue::get_error(cause)));
         }
 
         c.flags |= ClientFlags::EXIT;

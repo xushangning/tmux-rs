@@ -6,6 +6,7 @@ use std::{ffi::CString, mem::MaybeUninit};
 
 use libc::time_t;
 use log::debug;
+use mbox::MBox;
 
 use crate::{
     ClientFlags,
@@ -56,8 +57,10 @@ pub struct Item {
 }
 
 /// Get a callback for the command queue.
-pub(crate) fn get_callback1(name: &str, cb: cmdq_cb, data: *mut c_void) -> *mut Item {
-    let item = unsafe { xcalloc(1, mem::size_of::<Item>()) }.cast::<Item>();
+pub(crate) fn get_callback1(name: &str, cb: cmdq_cb, data: *mut c_void) -> MBox<Item> {
+    let mut ret =
+        unsafe { MBox::from_raw(xcalloc(1, mem::size_of::<Item>()).cast::<MaybeUninit<Item>>()) };
+    let item = ret.as_mut_ptr();
     unsafe {
         xasprintf(
             &mut (*item).name,
@@ -72,9 +75,9 @@ pub(crate) fn get_callback1(name: &str, cb: cmdq_cb, data: *mut c_void) -> *mut 
 
         (*item).cb = cb;
         (*item).data = data;
-    }
 
-    item
+        ret.assume_init()
+    }
 }
 
 /// Generic error callback.
@@ -86,7 +89,7 @@ extern "C" fn error_callback(item: *mut Item, data: *mut c_void) -> crate::cmd::
 }
 
 /// Get an error callback for the command queue.
-pub(crate) fn get_error(error: &str) -> *mut Item {
+pub(crate) fn get_error(error: &str) -> MBox<Item> {
     get_callback1(
         "cmdq_error_callback",
         Some(error_callback),
