@@ -200,17 +200,15 @@ extern "C" fn click_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
     if c.flags.intersects(ClientFlags::TRIPLE_CLICK) {
         // Waiting for a third click that hasn't happened, so this must
         // have been a double click.
-        let event = unsafe {
-            (xcalloc(1, mem::size_of::<key_event>()) as *mut key_event)
-                .as_mut()
-                .unwrap()
-        };
+        let mut event =
+            unsafe { MBox::from_raw(xcalloc(1, mem::size_of::<key_event>()).cast::<key_event>()) };
         event.key = KEYC_DOUBLECLICK as u64;
         event.m = c.click_event.clone();
         unsafe {
-            if server_client_handle_key(c, event) == 0 {
-                libc::free(event.buf.cast());
-                libc::free((event as *mut key_event).cast());
+            let mut event_nonnull = NonNull::from_mut(&mut event);
+            if server_client_handle_key(c, MBox::into_raw(event)) == 0 {
+                libc::free(event_nonnull.as_mut().buf.cast());
+                libc::free(event_nonnull.as_ptr().cast());
             }
         }
     }
