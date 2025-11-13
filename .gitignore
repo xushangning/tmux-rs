@@ -32,3 +32,5 @@ tmux.1.*
 
 /target
 libtool
+libtmux.la
+regress/test_result_*
