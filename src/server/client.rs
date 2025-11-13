@@ -1458,12 +1458,12 @@ pub(crate) extern "C" fn key_callback(
     data: *mut c_void,
 ) -> crate::cmd::Retval {
     use crate::tmux_sys::{
-        KEYC_ANY, KEYC_DOUBLECLICK, KEYC_DRAGGING, KEYC_FOCUS_IN, KEYC_FOCUS_OUT, KEYC_IS_MOUSE,
+        KEYC_ANY, KEYC_DOUBLECLICK, KEYC_DRAGGING, KEYC_FOCUS_IN, KEYC_FOCUS_OUT,
         KEYC_MASK_KEY, KEYC_MASK_MODIFIERS, KEYC_MOUSE, KEYC_MOUSEMOVE_BORDER,
         KEYC_MOUSEMOVE_PANE, KEYC_MOUSEMOVE_STATUS, KEYC_MOUSEMOVE_STATUS_DEFAULT,
         KEYC_MOUSEMOVE_STATUS_LEFT, KEYC_MOUSEMOVE_STATUS_RIGHT, KEYC_NONE,
         KEYC_REPORT_DARK_THEME, KEYC_REPORT_LIGHT_THEME, KEYC_SENT, KEYC_UNKNOWN,
-        KEY_BINDING_REPEAT, THEME_DARK, THEME_LIGHT,
+        KEY_BINDING_REPEAT, client_theme_THEME_DARK, client_theme_THEME_LIGHT,
     };
 
     let c = unsafe { crate::tmux_sys::cmdq_get_client(item).as_mut().unwrap() };
@@ -1479,7 +1479,7 @@ pub(crate) extern "C" fn key_callback(
     };
 
     /* Check the client is good to accept input. */
-    if c.flags.intersects(ClientFlags::UNATTACHEDFLAGS) {
+    if c.flags.intersects(ClientFlags::UNATTACHED) {
         unsafe {
             libc::free(event.buf.cast());
             libc::free(data);
@@ -1499,7 +1499,7 @@ pub(crate) extern "C" fn key_callback(
     /* Check for mouse keys. */
     m.valid = 0;
     if key == KEYC_MOUSE as u64 || key == KEYC_DOUBLECLICK as u64 {
-        if c.flags.intersects(ClientFlags::READONLY) {
+        if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
                 libc::free(event.buf.cast());
                 libc::free(data);
@@ -1536,7 +1536,7 @@ pub(crate) extern "C" fn key_callback(
     /* Handle theme reporting keys. */
     if key == KEYC_REPORT_LIGHT_THEME as u64 {
         unsafe {
-            crate::tmux_sys::server_client_report_theme(c, THEME_LIGHT);
+            crate::tmux_sys::server_client_report_theme(c, client_theme_THEME_LIGHT);
             libc::free(event.buf.cast());
             libc::free(data);
         }
@@ -1544,7 +1544,7 @@ pub(crate) extern "C" fn key_callback(
     }
     if key == KEYC_REPORT_DARK_THEME as u64 {
         unsafe {
-            crate::tmux_sys::server_client_report_theme(c, THEME_DARK);
+            crate::tmux_sys::server_client_report_theme(c, client_theme_THEME_DARK);
             libc::free(event.buf.cast());
             libc::free(data);
         }
@@ -1554,7 +1554,7 @@ pub(crate) extern "C" fn key_callback(
     /* Find affected pane. */
     let mut fs = MaybeUninit::<crate::tmux_sys::cmd_find_state>::uninit();
     unsafe {
-        if KEYC_IS_MOUSE(key) == 0 || crate::tmux_sys::cmd_find_from_mouse(fs.as_mut_ptr(), m, 0) != 0 {
+        if crate::tmux_sys::KEYC_IS_MOUSE(key) == 0 || crate::tmux_sys::cmd_find_from_mouse(fs.as_mut_ptr(), m, 0) != 0 {
             crate::tmux_sys::cmd_find_from_client(fs.as_mut_ptr(), c, 0);
         }
     }
@@ -1562,9 +1562,9 @@ pub(crate) extern "C" fn key_callback(
     let wp = fs.wp;
 
     /* Forward mouse keys if disabled. */
-    if unsafe { KEYC_IS_MOUSE(key) != 0 && options_get_number(s.options, c"mouse".as_ptr()) == 0 } {
+    if unsafe { crate::tmux_sys::KEYC_IS_MOUSE(key) != 0 && options_get_number(s.options, c"mouse".as_ptr()) == 0 } {
         // goto forward_key
-        if c.flags.intersects(ClientFlags::READONLY) {
+        if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
@@ -1592,7 +1592,7 @@ pub(crate) extern "C" fn key_callback(
     /* Forward if bracket pasting. */
     if unsafe { crate::tmux_sys::server_client_is_bracket_paste(c, key) != 0 } {
         // goto paste_key
-        if c.flags.intersects(ClientFlags::READONLY) {
+        if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
@@ -1620,14 +1620,14 @@ pub(crate) extern "C" fn key_callback(
 
     /* Treat everything as a regular key when pasting is detected. */
     if unsafe {
-        KEYC_IS_MOUSE(key) == 0
+        crate::tmux_sys::KEYC_IS_MOUSE(key) == 0
             && key != KEYC_FOCUS_IN as u64
             && key != KEYC_FOCUS_OUT as u64
             && (key & KEYC_SENT as u64) == 0
             && crate::tmux_sys::server_client_is_assume_paste(c) != 0
     } {
         // goto paste_key
-        if c.flags.intersects(ClientFlags::READONLY) {
+        if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
@@ -1681,6 +1681,7 @@ pub(crate) extern "C" fn key_callback(
         c.keytable
     };
     let first = table;
+    let mut flags = ClientFlags::empty();
 
     'table_changed: loop {
         /*
@@ -1705,7 +1706,7 @@ pub(crate) extern "C" fn key_callback(
             }
             return crate::cmd::Retval::Normal;
         }
-        let flags = c.flags;
+        flags = c.flags;
 
         'try_again: loop {
             /* Log key table. */
@@ -1864,7 +1865,7 @@ pub(crate) extern "C" fn key_callback(
             || key == KEYC_MOUSEMOVE_BORDER as u64
         {
             // goto forward_key
-            if c.flags.intersects(ClientFlags::READONLY) {
+            if c.flags.intersects(ClientFlags::READ_ONLY) {
                 unsafe {
                     if key != KEYC_FOCUS_OUT as u64 {
                         update_latest(c);
