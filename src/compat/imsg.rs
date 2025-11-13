@@ -1,14 +1,12 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
-    mem::{self, ManuallyDrop, MaybeUninit, offset_of},
+    mem::{self, MaybeUninit, offset_of},
     ptr::NonNull,
 };
-use std::{
-    ops::{Deref, DerefMut},
-    os::fd::{IntoRawFd, OwnedFd},
-};
+use std::os::fd::{IntoRawFd, OwnedFd};
 
 use bytemuck::NoUninit;
+use mbox::MBox;
 use nix::unistd::Pid;
 
 use crate::{compat::queue::tailq, tmux_sys::imsgbuf};
@@ -16,39 +14,6 @@ use crate::{compat::queue::tailq, tmux_sys::imsgbuf};
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
 
 const FD_MARK: usize = 0x80000000;
-
-#[repr(transparent)]
-pub struct OwnedIBuf(NonNull<IBuf>);
-
-impl Drop for OwnedIBuf {
-    fn drop(&mut self) {
-        unsafe {
-            self.0.drop_in_place();
-            libc::free(self.0.as_ptr().cast());
-        }
-    }
-}
-
-impl Deref for OwnedIBuf {
-    type Target = IBuf;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref() }
-    }
-}
-
-impl DerefMut for OwnedIBuf {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.0.as_mut() }
-    }
-}
-
-impl OwnedIBuf {
-    pub fn into_raw(p: Self) -> NonNull<IBuf> {
-        let p = ManuallyDrop::new(p);
-        p.0
-    }
-}
 
 #[repr(C)]
 pub struct IBuf {
@@ -64,17 +29,17 @@ pub struct IBuf {
 impl IBuf {
     const FD_MARK_ON_STACK: c_int = -2;
 
-    pub fn dynamic(len: usize, max: usize) -> nix::Result<OwnedIBuf> {
+    pub fn dynamic(len: usize, max: usize) -> nix::Result<MBox<Self>> {
         if max == 0 || max < len {
             return Err(nix::Error::EINVAL);
         }
 
-        let Some(buf) =
-            NonNull::new(unsafe { libc::calloc(1, mem::size_of::<Self>()) } as *mut Self)
-        else {
-            return Err(nix::Error::last());
+        let mut buf = unsafe {
+            MBox::from_non_null_raw(
+                NonNull::new(libc::calloc(1, mem::size_of::<Self>()).cast::<Self>())
+                    .ok_or_else(|| nix::Error::last())?,
+            )
         };
-        let mut buf = OwnedIBuf(buf);
         if len > 0 {
             buf.buf = NonNull::new(unsafe { libc::calloc(len, 1) } as *mut u8)
                 .ok_or_else(|| nix::Error::last())?;
@@ -244,7 +209,7 @@ pub(crate) fn create(
     id: u32,
     pid: Option<Pid>,
     mut data_len: usize,
-) -> nix::Result<OwnedIBuf> {
+) -> nix::Result<MBox<IBuf>> {
     data_len += HEADER_SIZE;
     if data_len > imsg_buf.maxsize as usize {
         return Err(nix::Error::ERANGE);
@@ -265,7 +230,7 @@ pub(crate) fn create(
     wbuf.add(bytemuck::bytes_of(&hdr)).map(|_| wbuf)
 }
 
-pub(crate) fn close(imsg_buf: &mut imsgbuf, mut msg: OwnedIBuf) {
+pub(crate) fn close(imsg_buf: &mut imsgbuf, mut msg: MBox<IBuf>) {
     let mut len = msg.size();
     if msg.fd_avail() {
         len |= FD_MARK;
@@ -273,6 +238,6 @@ pub(crate) fn close(imsg_buf: &mut imsgbuf, mut msg: OwnedIBuf) {
     msg.set_h32(offset_of!(Hdr, len), len.try_into().unwrap())
         .unwrap();
     unsafe {
-        crate::tmux_sys::ibuf_close(imsg_buf.w, OwnedIBuf::into_raw(msg).as_ptr());
+        crate::tmux_sys::ibuf_close(imsg_buf.w, MBox::into_raw(msg));
     }
 }
