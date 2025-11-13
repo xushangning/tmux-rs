@@ -31,3 +31,4 @@ tmux.1.*
 # Added by cargo
 
 /target
+libtool
