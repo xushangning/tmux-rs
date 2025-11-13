@@ -17,7 +17,7 @@ const FD_MARK: usize = 0x80000000;
 
 #[repr(C)]
 pub struct IBuf {
-    entry: MaybeUninit<tailq::Entry<IBuf>>,
+    entry: MaybeUninit<tailq::Entry<Self>>,
     buf: NonNull<c_uchar>,
     size: usize,
     max: usize,
@@ -29,26 +29,35 @@ pub struct IBuf {
 impl IBuf {
     const FD_MARK_ON_STACK: c_int = -2;
 
+    pub fn new(size: usize, max: usize) -> nix::Result<Self> {
+        let buf = NonNull::new(unsafe { libc::calloc(size, 1) }.cast::<u8>())
+            .ok_or_else(|| nix::Error::last())?;
+
+        Ok(Self {
+            entry: MaybeUninit::uninit(),
+            buf,
+            size,
+            max,
+            wpos: 0,
+            rpos: 0,
+            fd: -1,
+        })
+    }
+
     pub fn dynamic(len: usize, max: usize) -> nix::Result<MBox<Self>> {
         if max == 0 || max < len {
             return Err(nix::Error::EINVAL);
         }
 
-        let mut buf = unsafe {
-            MBox::from_non_null_raw(
-                NonNull::new(libc::calloc(1, mem::size_of::<Self>()).cast::<Self>())
+        unsafe {
+            let mut buf = MBox::from_non_null_raw(
+                NonNull::new(libc::calloc(1, mem::size_of::<Self>()).cast::<MaybeUninit<Self>>())
                     .ok_or_else(|| nix::Error::last())?,
-            )
-        };
-        if len > 0 {
-            buf.buf = NonNull::new(unsafe { libc::calloc(len, 1) } as *mut u8)
-                .ok_or_else(|| nix::Error::last())?;
-        }
-        buf.size = len;
-        buf.max = max;
-        buf.fd = -1;
+            );
+            buf.as_mut_ptr().write(Self::new(len, max)?);
 
-        Ok(buf)
+            Ok(buf.assume_init())
+        }
     }
 
     pub fn reserve(&mut self, len: usize) -> nix::Result<NonNull<u8>> {
