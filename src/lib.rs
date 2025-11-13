@@ -215,6 +215,16 @@ pub extern "C" fn format_skip(s: *const c_char, end: *const c_char) -> *const c_
     }
 }
 
+/// Check if a key is a mouse key.
+pub(crate) fn KEYC_IS_MOUSE(key: u64) -> c_int {
+    let masked_key = key & tmux_sys::KEYC_MASK_KEY;
+    if masked_key >= tmux_sys::KEYC_MOUSE as u64 && masked_key < tmux_sys::KEYC_BSPACE as u64 {
+        1
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -11,7 +11,7 @@ pub fn pledge(_promises: Option<&str>, _execpromises: Option<&str>) -> std::io::
 
 // TODO: figure out an easier way to do polyfill on other platforms.
 pub fn getprogname() -> &'static str {
-    unsafe { CStr::from_ptr(libc::getprogname()) }
+    unsafe { CStr::from_ptr(crate::tmux_sys::getprogname()) }
         .to_str()
         .unwrap()
 }

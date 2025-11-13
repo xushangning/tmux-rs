@@ -2889,6 +2889,13 @@ struct window_pane *server_client_get_pane(struct client *);
 void	 server_client_set_pane(struct client *, struct window_pane *);
 void	 server_client_remove_pane(struct window_pane *);
 void	 server_client_print(struct client *, int, struct evbuffer *);
+key_code server_client_check_mouse(struct client *, struct key_event *);
+void	 server_client_report_theme(struct client *, enum client_theme);
+uint64_t server_client_key_table_activity_diff(struct client *);
+int	 server_client_is_default_key_table(struct client *, struct key_table *);
+int	 server_client_is_bracket_paste(struct client *, key_code);
+int	 server_client_is_assume_paste(struct client *);
+u_int	 server_client_repeat_time(struct client *, struct key_binding *);
 
 /* server-fn.c */
 void	 server_redraw_client(struct client *);

@@ -46,7 +46,7 @@ static void	server_client_free(int, short, void *);
 static void	server_client_check_pane_resize(struct window_pane *);
 static void	server_client_check_pane_buffer(struct window_pane *);
 static void	server_client_check_window_resize(struct window *);
-static key_code	server_client_check_mouse(struct client *, struct key_event *);
+key_code	server_client_check_mouse(struct client *, struct key_event *);
 static void	server_client_repeat_timer(int, short, void *);
 static void	server_client_click_timer(int, short, void *);
 static void	server_client_check_exit(struct client *);
@@ -60,7 +60,7 @@ static void	server_client_dispatch(struct imsg *, void *);
 static void	server_client_dispatch_command(struct client *, struct imsg *);
 static void	server_client_dispatch_identify(struct client *, struct imsg *);
 static void	server_client_dispatch_shell(struct client *);
-static void	server_client_report_theme(struct client *, enum client_theme);
+void	server_client_report_theme(struct client *, enum client_theme);
 
 /* Compare client windows. */
 static int
@@ -241,7 +241,7 @@ server_client_set_key_table(struct client *c, const char *name)
 		fatal("gettimeofday failed");
 }
 
-static uint64_t
+uint64_t
 server_client_key_table_activity_diff(struct client *c)
 {
 	struct timeval	diff;
@@ -267,7 +267,7 @@ server_client_get_key_table(struct client *c)
 }
 
 /* Is this table the default key table? */
-static int
+int
 server_client_is_default_key_table(struct client *c, struct key_table *table)
 {
 	return (strcmp(table->name, server_client_get_key_table(c)) == 0);
@@ -664,7 +664,7 @@ server_client_check_mouse_in_pane(struct window_pane *wp, u_int px, u_int py,
 }
 
 /* Check for mouse keys. */
-static key_code
+key_code
 server_client_check_mouse(struct client *c, struct key_event *event)
 {
 	struct mouse_event	*m = &event->m;
@@ -2242,7 +2242,7 @@ out:
 }
 
 /* Is this a bracket paste key? */
-static int
+int
 server_client_is_bracket_paste(struct client *c, key_code key)
 {
 	if ((key & KEYC_MASK_KEY) == KEYC_PASTE_START) {
@@ -2261,7 +2261,7 @@ server_client_is_bracket_paste(struct client *c, key_code key)
 }
 
 /* Is this fast enough to probably be a paste? */
-static int
+int
 server_client_is_assume_paste(struct client *c)
 {
 	struct session	*s = c->session;
@@ -2309,7 +2309,7 @@ server_client_update_latest(struct client *c)
 }
 
 /* Get repeat time. */
-static u_int
+u_int
 server_client_repeat_time(struct client *c, struct key_binding *bd)
 {
 	struct session	*s = c->session;
@@ -3930,7 +3930,7 @@ out:
 		free(msg);
 }
 
-static void
+void
 server_client_report_theme(struct client *c, enum client_theme theme)
 {
 	if (theme == THEME_LIGHT) {

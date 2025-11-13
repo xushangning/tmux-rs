@@ -1467,12 +1467,12 @@ pub(crate) extern "C" fn key_callback(
     };
 
     let c = unsafe { crate::tmux_sys::cmdq_get_client(item).as_mut().unwrap() };
-    let event = unsafe { (data as *mut key_event).as_mut().unwrap() };
-    let mut key = event.key;
-    let m = unsafe { &mut event.m };
+    let event = data as *mut key_event;
+    let mut key = unsafe { (*event).key };
+    let m = unsafe { &mut (*event).m };
     let Some(s) = (unsafe { c.session.as_mut() }) else {
         unsafe {
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1481,7 +1481,7 @@ pub(crate) extern "C" fn key_callback(
     /* Check the client is good to accept input. */
     if c.flags.intersects(ClientFlags::UNATTACHED) {
         unsafe {
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1501,7 +1501,7 @@ pub(crate) extern "C" fn key_callback(
     if key == KEYC_MOUSE as u64 || key == KEYC_DOUBLECLICK as u64 {
         if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
@@ -1509,7 +1509,7 @@ pub(crate) extern "C" fn key_callback(
         key = unsafe { crate::tmux_sys::server_client_check_mouse(c, event) };
         if key == KEYC_UNKNOWN as u64 {
             unsafe {
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
@@ -1525,19 +1525,19 @@ pub(crate) extern "C" fn key_callback(
         if (key & KEYC_MASK_KEY as u64) == KEYC_DRAGGING as u64 {
             unsafe {
                 c.tty.mouse_drag_update.unwrap()(c, m);
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
         }
-        event.key = key;
+        unsafe { (*event).key = key };
     }
 
     /* Handle theme reporting keys. */
     if key == KEYC_REPORT_LIGHT_THEME as u64 {
         unsafe {
             crate::tmux_sys::server_client_report_theme(c, client_theme_THEME_LIGHT);
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1545,7 +1545,7 @@ pub(crate) extern "C" fn key_callback(
     if key == KEYC_REPORT_DARK_THEME as u64 {
         unsafe {
             crate::tmux_sys::server_client_report_theme(c, client_theme_THEME_DARK);
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1554,7 +1554,7 @@ pub(crate) extern "C" fn key_callback(
     /* Find affected pane. */
     let mut fs = MaybeUninit::<crate::tmux_sys::cmd_find_state>::uninit();
     unsafe {
-        if crate::tmux_sys::KEYC_IS_MOUSE(key) == 0 || crate::tmux_sys::cmd_find_from_mouse(fs.as_mut_ptr(), m, 0) != 0 {
+        if crate::KEYC_IS_MOUSE(key) == 0 || crate::tmux_sys::cmd_find_from_mouse(fs.as_mut_ptr(), m, 0) != 0 {
             crate::tmux_sys::cmd_find_from_client(fs.as_mut_ptr(), c, 0);
         }
     }
@@ -1562,14 +1562,14 @@ pub(crate) extern "C" fn key_callback(
     let wp = fs.wp;
 
     /* Forward mouse keys if disabled. */
-    if unsafe { crate::tmux_sys::KEYC_IS_MOUSE(key) != 0 && options_get_number(s.options, c"mouse".as_ptr()) == 0 } {
+    if unsafe { crate::KEYC_IS_MOUSE(key) != 0 && options_get_number(s.options, c"mouse".as_ptr()) == 0 } {
         // goto forward_key
         if c.flags.intersects(ClientFlags::READ_ONLY) {
             unsafe {
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
                 }
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
@@ -1583,7 +1583,7 @@ pub(crate) extern "C" fn key_callback(
             if key != KEYC_FOCUS_OUT as u64 {
                 update_latest(c);
             }
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1597,14 +1597,14 @@ pub(crate) extern "C" fn key_callback(
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
                 }
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
         }
-        if !event.buf.is_null() {
-            unsafe {
-                crate::tmux_sys::window_pane_paste(wp, key, event.buf, event.len);
+        unsafe {
+            if !(*event).buf.is_null() {
+                crate::tmux_sys::window_pane_paste(wp, key, (*event).buf, (*event).len);
             }
         }
         key = KEYC_NONE as u64;
@@ -1612,7 +1612,7 @@ pub(crate) extern "C" fn key_callback(
             if key != KEYC_FOCUS_OUT as u64 {
                 update_latest(c);
             }
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1620,7 +1620,7 @@ pub(crate) extern "C" fn key_callback(
 
     /* Treat everything as a regular key when pasting is detected. */
     if unsafe {
-        crate::tmux_sys::KEYC_IS_MOUSE(key) == 0
+        crate::KEYC_IS_MOUSE(key) == 0
             && key != KEYC_FOCUS_IN as u64
             && key != KEYC_FOCUS_OUT as u64
             && (key & KEYC_SENT as u64) == 0
@@ -1632,14 +1632,14 @@ pub(crate) extern "C" fn key_callback(
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
                 }
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
         }
-        if !event.buf.is_null() {
-            unsafe {
-                crate::tmux_sys::window_pane_paste(wp, key, event.buf, event.len);
+        unsafe {
+            if !(*event).buf.is_null() {
+                crate::tmux_sys::window_pane_paste(wp, key, (*event).buf, (*event).len);
             }
         }
         key = KEYC_NONE as u64;
@@ -1647,7 +1647,7 @@ pub(crate) extern "C" fn key_callback(
             if key != KEYC_FOCUS_OUT as u64 {
                 update_latest(c);
             }
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1701,7 +1701,7 @@ pub(crate) extern "C" fn key_callback(
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
                 }
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
@@ -1747,7 +1747,7 @@ pub(crate) extern "C" fn key_callback(
                  */
                 if !bd.is_null()
                     && c.flags.intersects(ClientFlags::REPEAT)
-                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as u64 != 0 }
+                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as i32 != 0 }
                 {
                     debug!("prefix timeout ignored, repeat is active");
                 } else {
@@ -1769,7 +1769,7 @@ pub(crate) extern "C" fn key_callback(
                  * again in the root table.
                  */
                 if c.flags.intersects(ClientFlags::REPEAT)
-                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as u64 == 0 }
+                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as i32 == 0 }
                 {
                     unsafe {
                         debug!(
@@ -1836,7 +1836,7 @@ pub(crate) extern "C" fn key_callback(
                     if key != KEYC_FOCUS_OUT as u64 {
                         update_latest(c);
                     }
-                    libc::free(event.buf.cast());
+                    libc::free((*event).buf.cast());
                     libc::free(data);
                 }
                 return crate::cmd::Retval::Normal;
@@ -1870,7 +1870,7 @@ pub(crate) extern "C" fn key_callback(
                     if key != KEYC_FOCUS_OUT as u64 {
                         update_latest(c);
                     }
-                    libc::free(event.buf.cast());
+                    libc::free((*event).buf.cast());
                     libc::free(data);
                 }
                 return crate::cmd::Retval::Normal;
@@ -1884,7 +1884,7 @@ pub(crate) extern "C" fn key_callback(
                 if key != KEYC_FOCUS_OUT as u64 {
                     update_latest(c);
                 }
-                libc::free(event.buf.cast());
+                libc::free((*event).buf.cast());
                 libc::free(data);
             }
             return crate::cmd::Retval::Normal;
@@ -1930,19 +1930,19 @@ pub(crate) extern "C" fn key_callback(
             if key != KEYC_FOCUS_OUT as u64 {
                 update_latest(c);
             }
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
     }
 
     // forward_key:
-    if c.flags.intersects(ClientFlags::READONLY) {
+    if c.flags.intersects(ClientFlags::READ_ONLY) {
         unsafe {
             if key != KEYC_FOCUS_OUT as u64 {
                 update_latest(c);
             }
-            libc::free(event.buf.cast());
+            libc::free((*event).buf.cast());
             libc::free(data);
         }
         return crate::cmd::Retval::Normal;
@@ -1956,7 +1956,7 @@ pub(crate) extern "C" fn key_callback(
         if key != KEYC_FOCUS_OUT as u64 {
             update_latest(c);
         }
-        libc::free(event.buf.cast());
+        libc::free((*event).buf.cast());
         libc::free(data);
     }
     crate::cmd::Retval::Normal

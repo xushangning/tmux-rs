@@ -13,6 +13,8 @@ fn main() {
     println!("cargo:rustc-link-lib=tmux");
     let bindings = bindgen::Builder::default()
         .header("tmux.h")
+        .merge_extern_blocks(true)
+        .blocklist_item("IPPORT_.*")
         .blocklist_type("timeval")
         .raw_line("use libc::timeval;")
         .blocklist_type("clients")
