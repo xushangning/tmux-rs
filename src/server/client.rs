@@ -1452,6 +1452,515 @@ fn dispatch_shell(c: &mut Client) {
     }
 }
 
+/// Key event callback.
+pub(crate) extern "C" fn key_callback(
+    item: *mut crate::tmux_sys::cmdq_item,
+    data: *mut c_void,
+) -> crate::cmd::Retval {
+    use crate::tmux_sys::{
+        KEYC_ANY, KEYC_DOUBLECLICK, KEYC_DRAGGING, KEYC_FOCUS_IN, KEYC_FOCUS_OUT, KEYC_IS_MOUSE,
+        KEYC_MASK_KEY, KEYC_MASK_MODIFIERS, KEYC_MOUSE, KEYC_MOUSEMOVE_BORDER,
+        KEYC_MOUSEMOVE_PANE, KEYC_MOUSEMOVE_STATUS, KEYC_MOUSEMOVE_STATUS_DEFAULT,
+        KEYC_MOUSEMOVE_STATUS_LEFT, KEYC_MOUSEMOVE_STATUS_RIGHT, KEYC_NONE,
+        KEYC_REPORT_DARK_THEME, KEYC_REPORT_LIGHT_THEME, KEYC_SENT, KEYC_UNKNOWN,
+        KEY_BINDING_REPEAT, THEME_DARK, THEME_LIGHT,
+    };
+
+    let c = unsafe { crate::tmux_sys::cmdq_get_client(item).as_mut().unwrap() };
+    let event = unsafe { (data as *mut key_event).as_mut().unwrap() };
+    let mut key = event.key;
+    let m = unsafe { &mut event.m };
+    let Some(s) = (unsafe { c.session.as_mut() }) else {
+        unsafe {
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    };
+
+    /* Check the client is good to accept input. */
+    if c.flags.intersects(ClientFlags::UNATTACHEDFLAGS) {
+        unsafe {
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+    let wl = unsafe { s.curw.as_mut().unwrap() };
+
+    /* Update the activity timer. */
+    c.last_activity_time = c.activity_time.clone();
+    Errno::result(unsafe { gettimeofday(&mut c.activity_time, ptr::null_mut()) })
+        .expect("gettimeofday failed");
+    unsafe {
+        session_update_activity(s, &mut c.activity_time);
+    }
+
+    /* Check for mouse keys. */
+    m.valid = 0;
+    if key == KEYC_MOUSE as u64 || key == KEYC_DOUBLECLICK as u64 {
+        if c.flags.intersects(ClientFlags::READONLY) {
+            unsafe {
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        key = unsafe { crate::tmux_sys::server_client_check_mouse(c, event) };
+        if key == KEYC_UNKNOWN as u64 {
+            unsafe {
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+
+        m.valid = 1;
+        m.key = key;
+
+        /*
+         * Mouse drag is in progress, so fire the callback (now that
+         * the mouse event is valid).
+         */
+        if (key & KEYC_MASK_KEY as u64) == KEYC_DRAGGING as u64 {
+            unsafe {
+                c.tty.mouse_drag_update.unwrap()(c, m);
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        event.key = key;
+    }
+
+    /* Handle theme reporting keys. */
+    if key == KEYC_REPORT_LIGHT_THEME as u64 {
+        unsafe {
+            crate::tmux_sys::server_client_report_theme(c, THEME_LIGHT);
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+    if key == KEYC_REPORT_DARK_THEME as u64 {
+        unsafe {
+            crate::tmux_sys::server_client_report_theme(c, THEME_DARK);
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+
+    /* Find affected pane. */
+    let mut fs = MaybeUninit::<crate::tmux_sys::cmd_find_state>::uninit();
+    unsafe {
+        if KEYC_IS_MOUSE(key) == 0 || crate::tmux_sys::cmd_find_from_mouse(fs.as_mut_ptr(), m, 0) != 0 {
+            crate::tmux_sys::cmd_find_from_client(fs.as_mut_ptr(), c, 0);
+        }
+    }
+    let fs = unsafe { fs.assume_init() };
+    let wp = fs.wp;
+
+    /* Forward mouse keys if disabled. */
+    if unsafe { KEYC_IS_MOUSE(key) != 0 && options_get_number(s.options, c"mouse".as_ptr()) == 0 } {
+        // goto forward_key
+        if c.flags.intersects(ClientFlags::READONLY) {
+            unsafe {
+                if key != KEYC_FOCUS_OUT as u64 {
+                    update_latest(c);
+                }
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        if !wp.is_null() {
+            unsafe {
+                crate::tmux_sys::window_pane_key(wp, c, s, wl, key, m);
+            }
+        }
+        unsafe {
+            if key != KEYC_FOCUS_OUT as u64 {
+                update_latest(c);
+            }
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+
+    /* Forward if bracket pasting. */
+    if unsafe { crate::tmux_sys::server_client_is_bracket_paste(c, key) != 0 } {
+        // goto paste_key
+        if c.flags.intersects(ClientFlags::READONLY) {
+            unsafe {
+                if key != KEYC_FOCUS_OUT as u64 {
+                    update_latest(c);
+                }
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        if !event.buf.is_null() {
+            unsafe {
+                crate::tmux_sys::window_pane_paste(wp, key, event.buf, event.len);
+            }
+        }
+        key = KEYC_NONE as u64;
+        unsafe {
+            if key != KEYC_FOCUS_OUT as u64 {
+                update_latest(c);
+            }
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+
+    /* Treat everything as a regular key when pasting is detected. */
+    if unsafe {
+        KEYC_IS_MOUSE(key) == 0
+            && key != KEYC_FOCUS_IN as u64
+            && key != KEYC_FOCUS_OUT as u64
+            && (key & KEYC_SENT as u64) == 0
+            && crate::tmux_sys::server_client_is_assume_paste(c) != 0
+    } {
+        // goto paste_key
+        if c.flags.intersects(ClientFlags::READONLY) {
+            unsafe {
+                if key != KEYC_FOCUS_OUT as u64 {
+                    update_latest(c);
+                }
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        if !event.buf.is_null() {
+            unsafe {
+                crate::tmux_sys::window_pane_paste(wp, key, event.buf, event.len);
+            }
+        }
+        key = KEYC_NONE as u64;
+        unsafe {
+            if key != KEYC_FOCUS_OUT as u64 {
+                update_latest(c);
+            }
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+
+    /*
+     * Work out the current key table. If the pane is in a mode, use
+     * the mode table instead of the default key table.
+     */
+    let mut table = if unsafe {
+        crate::tmux_sys::server_client_is_default_key_table(c, c.keytable) != 0
+            && !wp.is_null()
+    } {
+        let wme = unsafe { (*wp).modes.assume_init_ref().front() };
+        if let Some(wme) = wme {
+            let wme = unsafe { wme.as_ref() };
+            if !wme.mode.is_null() {
+                let mode = unsafe { wme.mode.as_ref().unwrap() };
+                if let Some(key_table_fn) = mode.key_table {
+                    unsafe { key_bindings_get_table(key_table_fn(wme as *const _ as *mut _), 1) }
+                } else {
+                    c.keytable
+                }
+            } else {
+                c.keytable
+            }
+        } else {
+            c.keytable
+        }
+    } else {
+        c.keytable
+    };
+    let first = table;
+
+    'table_changed: loop {
+        /*
+         * The prefix always takes precedence and forces a switch to the prefix
+         * table, unless we are already there.
+         */
+        let prefix = unsafe { options_get_number(s.options, c"prefix".as_ptr()) } as u64;
+        let prefix2 = unsafe { options_get_number(s.options, c"prefix2".as_ptr()) } as u64;
+        let key0 = key & (KEYC_MASK_KEY as u64 | KEYC_MASK_MODIFIERS as u64);
+        if (key0 == (prefix & (KEYC_MASK_KEY as u64 | KEYC_MASK_MODIFIERS as u64))
+            || key0 == (prefix2 & (KEYC_MASK_KEY as u64 | KEYC_MASK_MODIFIERS as u64)))
+            && unsafe { libc::strcmp((*table).name, c"prefix".as_ptr()) != 0 }
+        {
+            set_key_table(c, c"prefix".as_ptr());
+            unsafe {
+                crate::tmux_sys::server_status_client(c);
+                if key != KEYC_FOCUS_OUT as u64 {
+                    update_latest(c);
+                }
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+        let flags = c.flags;
+
+        'try_again: loop {
+            /* Log key table. */
+            if wp.is_null() {
+                unsafe {
+                    debug!("key table {} (no pane)", CStr::from_ptr((*table).name).to_str().unwrap());
+                }
+            } else {
+                unsafe {
+                    debug!(
+                        "key table {} (pane %{})",
+                        CStr::from_ptr((*table).name).to_str().unwrap(),
+                        (*wp).id
+                    );
+                }
+            }
+            if c.flags.intersects(ClientFlags::REPEAT) {
+                debug!("currently repeating");
+            }
+
+            let mut key0 = key0;
+            let bd = unsafe { crate::tmux_sys::key_bindings_get(table, key0) };
+
+            /*
+             * If prefix-timeout is enabled and we're in the prefix table, see if
+             * the timeout has been exceeded. Revert to the root table if so.
+             */
+            let prefix_delay = unsafe {
+                options_get_number(crate::tmux_sys::global_options, c"prefix-timeout".as_ptr())
+            } as u64;
+            if prefix_delay > 0
+                && unsafe { libc::strcmp((*table).name, c"prefix".as_ptr()) == 0 }
+                && unsafe { crate::tmux_sys::server_client_key_table_activity_diff(c) } > prefix_delay
+            {
+                /*
+                 * If repeating is active and this is a repeating binding,
+                 * ignore the timeout.
+                 */
+                if !bd.is_null()
+                    && c.flags.intersects(ClientFlags::REPEAT)
+                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as u64 != 0 }
+                {
+                    debug!("prefix timeout ignored, repeat is active");
+                } else {
+                    debug!("prefix timeout exceeded");
+                    set_key_table(c, ptr::null());
+                    table = c.keytable;
+                    unsafe {
+                        crate::tmux_sys::server_status_client(c);
+                    }
+                    continue 'table_changed;
+                }
+            }
+
+            /* Try to see if there is a key binding in the current table. */
+            if !bd.is_null() {
+                /*
+                 * Key was matched in this table. If currently repeating but a
+                 * non-repeating binding was found, stop repeating and try
+                 * again in the root table.
+                 */
+                if c.flags.intersects(ClientFlags::REPEAT)
+                    && unsafe { (*bd).flags & KEY_BINDING_REPEAT as u64 == 0 }
+                {
+                    unsafe {
+                        debug!(
+                            "found in key table {} (not repeating)",
+                            CStr::from_ptr((*table).name).to_str().unwrap()
+                        );
+                    }
+                    set_key_table(c, ptr::null());
+                    table = c.keytable;
+                    c.flags.remove(ClientFlags::REPEAT);
+                    unsafe {
+                        crate::tmux_sys::server_status_client(c);
+                    }
+                    continue 'table_changed;
+                }
+                unsafe {
+                    debug!(
+                        "found in key table {}",
+                        CStr::from_ptr((*table).name).to_str().unwrap()
+                    );
+                }
+
+                /*
+                 * Take a reference to this table to make sure the key binding
+                 * doesn't disappear.
+                 */
+                unsafe {
+                    (*table).references += 1;
+                }
+
+                /*
+                 * If this is a repeating key, start the timer. Otherwise reset
+                 * the client back to the root table.
+                 */
+                let repeat = unsafe { crate::tmux_sys::server_client_repeat_time(c, bd) };
+                if repeat != 0 {
+                    c.flags |= ClientFlags::REPEAT;
+                    c.last_key = unsafe { (*bd).key };
+
+                    let mut tv = timeval {
+                        tv_sec: (repeat / 1000) as i64,
+                        tv_usec: ((repeat % 1000) * 1000) as i64,
+                    };
+                    unsafe {
+                        event_del(&mut c.repeat_timer);
+                        evtimer_add(&mut c.repeat_timer, &mut tv);
+                    }
+                } else {
+                    c.flags.remove(ClientFlags::REPEAT);
+                    set_key_table(c, ptr::null());
+                }
+                unsafe {
+                    crate::tmux_sys::server_status_client(c);
+
+                    /* Execute the key binding. */
+                    crate::tmux_sys::key_bindings_dispatch(
+                        bd,
+                        item,
+                        c,
+                        event as *mut _ as *mut _,
+                        &fs as *const _ as *mut _,
+                    );
+                    crate::tmux_sys::key_bindings_unref_table(table);
+                    if key != KEYC_FOCUS_OUT as u64 {
+                        update_latest(c);
+                    }
+                    libc::free(event.buf.cast());
+                    libc::free(data);
+                }
+                return crate::cmd::Retval::Normal;
+            }
+
+            /*
+             * No match, try the ANY key.
+             */
+            if key0 != KEYC_ANY as u64 {
+                key0 = KEYC_ANY as u64;
+                continue 'try_again;
+            }
+
+            break;
+        }
+
+        /*
+         * Binding movement keys is useless since we only turn them on when the
+         * application requests, so don't let them exit the prefix table.
+         */
+        if key == KEYC_MOUSEMOVE_PANE as u64
+            || key == KEYC_MOUSEMOVE_STATUS as u64
+            || key == KEYC_MOUSEMOVE_STATUS_LEFT as u64
+            || key == KEYC_MOUSEMOVE_STATUS_RIGHT as u64
+            || key == KEYC_MOUSEMOVE_STATUS_DEFAULT as u64
+            || key == KEYC_MOUSEMOVE_BORDER as u64
+        {
+            // goto forward_key
+            if c.flags.intersects(ClientFlags::READONLY) {
+                unsafe {
+                    if key != KEYC_FOCUS_OUT as u64 {
+                        update_latest(c);
+                    }
+                    libc::free(event.buf.cast());
+                    libc::free(data);
+                }
+                return crate::cmd::Retval::Normal;
+            }
+            if !wp.is_null() {
+                unsafe {
+                    crate::tmux_sys::window_pane_key(wp, c, s, wl, key, m);
+                }
+            }
+            unsafe {
+                if key != KEYC_FOCUS_OUT as u64 {
+                    update_latest(c);
+                }
+                libc::free(event.buf.cast());
+                libc::free(data);
+            }
+            return crate::cmd::Retval::Normal;
+        }
+
+        /*
+         * No match in this table. If not in the root table or if repeating
+         * switch the client back to the root table and try again.
+         */
+        unsafe {
+            debug!(
+                "not found in key table {}",
+                CStr::from_ptr((*table).name).to_str().unwrap()
+            );
+        }
+        if unsafe { crate::tmux_sys::server_client_is_default_key_table(c, table) == 0 }
+            || c.flags.intersects(ClientFlags::REPEAT)
+        {
+            debug!("trying in root table");
+            set_key_table(c, ptr::null());
+            table = c.keytable;
+            if c.flags.intersects(ClientFlags::REPEAT) {
+                // first = table; // Not needed since we'll exit the loop
+            }
+            c.flags.remove(ClientFlags::REPEAT);
+            unsafe {
+                crate::tmux_sys::server_status_client(c);
+            }
+            continue 'table_changed;
+        }
+
+        break;
+    }
+
+    /*
+     * No match in the root table either. If this wasn't the first table
+     * tried, don't pass the key to the pane.
+     */
+    if first != table && !flags.intersects(ClientFlags::REPEAT) {
+        set_key_table(c, ptr::null());
+        unsafe {
+            crate::tmux_sys::server_status_client(c);
+            if key != KEYC_FOCUS_OUT as u64 {
+                update_latest(c);
+            }
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+
+    // forward_key:
+    if c.flags.intersects(ClientFlags::READONLY) {
+        unsafe {
+            if key != KEYC_FOCUS_OUT as u64 {
+                update_latest(c);
+            }
+            libc::free(event.buf.cast());
+            libc::free(data);
+        }
+        return crate::cmd::Retval::Normal;
+    }
+    if !wp.is_null() {
+        unsafe {
+            crate::tmux_sys::window_pane_key(wp, c, s, wl, key, m);
+        }
+    }
+    unsafe {
+        if key != KEYC_FOCUS_OUT as u64 {
+            update_latest(c);
+        }
+        libc::free(event.buf.cast());
+        libc::free(data);
+    }
+    crate::cmd::Retval::Normal
+}
+
 impl Client {
     /// Clear overlay mode on client.
     pub(crate) fn clear_overlay(&mut self) {
