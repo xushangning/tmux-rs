@@ -2,7 +2,7 @@ use core::{
     ffi::{CStr, c_char, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
     pin::Pin,
-    ptr::{self, NonNull},
+    ptr,
 };
 use std::{
     ffi::{CString, OsStr},
@@ -17,6 +17,7 @@ use std::{
 use bitflags::bitflags;
 use libc::uid_t;
 use log::debug;
+use mbox::MBox;
 use nix::{errno::Errno, unistd::ForkResult};
 
 use crate::{
@@ -25,7 +26,7 @@ use crate::{
     tmux_sys::{
         EV_READ, EV_WRITE, PROTOCOL_VERSION, event_add, event_del, event_get_method,
         event_get_version, event_set, imsg, imsg_free, imsg_get, imsgbuf, imsgbuf_queuelen,
-        imsgbuf_read, imsgbuf_write, tmuxproc, xcalloc, xstrdup,
+        imsgbuf_read, imsgbuf_write, xstrdup,
     },
 };
 
@@ -175,7 +176,7 @@ pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u
     Some(())
 }
 
-pub(crate) fn start(name: &str) -> NonNull<Proc> {
+pub(crate) fn start(name: &str) -> MBox<Proc> {
     crate::log::open(name);
     let socket_path = Path::new(OsStr::from_bytes(
         unsafe { CStr::from_ptr(crate::tmux_sys::socket_path) }.to_bytes(),
@@ -212,10 +213,10 @@ pub(crate) fn start(name: &str) -> NonNull<Proc> {
     // #endif
 
     unsafe {
-        let mut tp: NonNull<tmuxproc> =
-            NonNull::new_unchecked(xcalloc(1, mem::size_of::<tmuxproc>()).cast());
-        tp.as_mut().name = xstrdup(CString::new(name).unwrap().as_ptr());
-        tailq::Head::new(Pin::new_unchecked(&mut tp.as_mut().peers));
+        let mut tp =
+            MBox::from_raw(crate::tmux_sys::xcalloc(1, mem::size_of::<Proc>()).cast::<Proc>());
+        tp.name = xstrdup(CString::new(name).unwrap().as_ptr());
+        tailq::Head::new(Pin::new_unchecked(&mut tp.peers));
         tp
     }
 }

@@ -32,6 +32,7 @@ use libc::{
     WUNTRACED, timeval,
 };
 use log::debug;
+use mbox::MBox;
 use nix::{
     errno::Errno,
     sys::{
@@ -46,14 +47,15 @@ use crate::{
     compat::queue::tailq,
     libevent::{evtimer_add, evtimer_set},
     pledge,
+    proc::Proc,
     tmux_sys::{
         EV_READ, WAIT_ANY, cmd_wait_for_flush, cmdq_next, event_add, event_base, event_del,
         event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
         options_get_number, options_set_number, proc_clear_signals, proc_loop, proc_set_signals,
         proc_toggle_log, server_acl_init, server_acl_join, server_client_lost, server_destroy_pane,
-        session_destroy, status_prompt_save_history, tmuxproc, tty_create_log,
-        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
+        session_destroy, status_prompt_save_history, tty_create_log, utf8_update_width_cache,
+        window_pane_destroy_ready, xstrdup,
     },
     window::PaneFlags,
 };
@@ -122,7 +124,7 @@ extern "C" fn tidy_event(_fd: c_int, _events: c_short, _data: *mut c_void) {
 
 /// Fork new server.
 pub(crate) fn start(
-    client: *mut tmuxproc,
+    client: &mut Proc,
     flags: ClientFlags,
     base: *mut event_base,
     lock_file: Option<File>,
@@ -149,7 +151,7 @@ pub(crate) fn start(
         panic!("event_reinit failed");
     }
     unsafe {
-        crate::tmux_sys::server_proc = crate::proc::start("server").as_ptr();
+        crate::tmux_sys::server_proc = MBox::into_raw(crate::proc::start("server"));
     }
 
     unsafe {
