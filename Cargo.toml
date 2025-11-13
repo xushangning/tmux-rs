@@ -17,7 +17,7 @@ clap = { path = "../clap", features = ["derive"] }
 libc = "0.2.174"
 log = "0.4.27"
 nix = { version = "0.30.1", features = ["feature", "fs", "process", "signal", "socket", "term", "user"] }
-spdlog-rs = { version = "0.4.3", features = ["log"] }
+spdlog-rs = { version = "0.5.1", features = ["log"] }
 thiserror = "2.0.12"
 
 [build-dependencies]
