@@ -30,12 +30,12 @@ use crate::{
         control_ready, control_start, environ_put, evbuffer_get_length, event_del,
         event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
         global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
-        notify_client, options_get_command, options_get_number, options_get_string, proc_add_peer,
-        proc_kill_peer, recalculate_size, recalculate_sizes, server_client_handle_key,
-        server_client_lost, server_redraw_client, session_update_activity, start_cfg,
-        status_at_line, status_init, status_line_size, tty_close, tty_get_features, tty_init,
-        tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty, tty_update_mode,
-        window_update_focus, xasprintf, xcalloc, xreallocarray, xstrdup,
+        notify_client, options_get_command, options_get_number, options_get_string, proc_kill_peer,
+        recalculate_size, recalculate_sizes, server_client_handle_key, server_client_lost,
+        server_redraw_client, session_update_activity, start_cfg, status_at_line, status_init,
+        status_line_size, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
+        tty_send_requests, tty_start_tty, tty_update_mode, window_update_focus, xasprintf, xcalloc,
+        xreallocarray, xstrdup,
     },
     tty::TtyFlags,
     util,
@@ -101,14 +101,13 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     };
     let c_ptr = &raw mut *c.as_mut();
     c.references = 1;
-    c.peer = unsafe {
-        proc_add_peer(
-            crate::tmux_sys::server_proc,
-            sock.into_raw_fd(),
-            Some(dispatch),
-            c_ptr.cast(),
-        )
-    };
+    c.peer = crate::proc::add_peer(
+        unsafe { crate::tmux_sys::server_proc.as_mut().unwrap() },
+        sock.into_raw_fd(),
+        Some(dispatch),
+        c_ptr.cast(),
+    )
+    .as_ptr();
 
     Errno::result(unsafe { gettimeofday(&mut c.creation_time, ptr::null_mut()) })
         .expect("gettimeofday failed");

@@ -2,16 +2,16 @@ use core::{
     ffi::{CStr, c_char, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
     pin::Pin,
-    ptr,
+    ptr::{self, NonNull},
 };
 use std::{
     ffi::{CString, OsStr},
     os::{
-        fd::OwnedFd,
+        fd::{OwnedFd, RawFd},
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::Path,
-    process,
+    process, u32,
 };
 
 use bitflags::bitflags;
@@ -68,7 +68,48 @@ pub struct Peer {
     dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
     arg: *mut c_void,
 
-    entry: tailq::Entry<Peer>,
+    entry: MaybeUninit<tailq::Entry<Self>>,
+}
+
+impl Peer {
+    fn init(
+        uninit: &mut MaybeUninit<Self>,
+        parent: NonNull<Proc>,
+        fd: RawFd,
+        dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
+        arg: *mut c_void,
+    ) {
+        let ptr = uninit.as_mut_ptr();
+        unsafe {
+            ptr.write(Self {
+                parent: parent.as_ptr(),
+                ibuf: mem::zeroed(),
+                event: mem::zeroed(),
+                uid: 0,
+                flags: PeerFlag::empty(),
+                dispatchcb,
+                arg,
+                entry: MaybeUninit::uninit(),
+            });
+
+            if crate::tmux_sys::imsgbuf_init(&mut (*ptr).ibuf, fd) == -1 {
+                Result::<(), _>::Err(nix::Error::last()).expect("imsgbuf_init");
+            }
+            crate::tmux_sys::imsgbuf_allow_fdpass(&mut (*ptr).ibuf);
+            event_set(
+                &mut (*ptr).event,
+                fd,
+                EV_READ.try_into().unwrap(),
+                Some(event_cb),
+                ptr.cast(),
+            );
+
+            let mut gid = MaybeUninit::uninit();
+            if libc::getpeereid(fd, &mut (*ptr).uid, gid.as_mut_ptr()) != 0 {
+                (&raw mut (*ptr).uid).write(u32::MAX);
+            }
+        }
+    }
 }
 
 extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
@@ -219,6 +260,31 @@ pub(crate) fn start(name: &str) -> MBox<Proc> {
         tailq::Head::new(Pin::new_unchecked(&mut tp.peers));
         tp
     }
+}
+
+pub(crate) fn add_peer(
+    tp: &mut Proc,
+    fd: RawFd,
+    dispatchcb: Option<unsafe extern "C" fn(arg1: *mut IMsg, arg2: *mut c_void)>,
+    arg: *mut c_void,
+) -> NonNull<Peer> {
+    let mut peer = unsafe {
+        let mut peer = MBox::from_raw(
+            crate::tmux_sys::xcalloc(1, mem::size_of::<Peer>()).cast::<MaybeUninit<Peer>>(),
+        );
+        Peer::init(&mut peer, NonNull::from_mut(tp), fd, dispatchcb, arg);
+        MBox::into_pin(peer.assume_init())
+    };
+
+    let mut peer_nonnull = NonNull::from_mut(unsafe { peer.as_mut().get_unchecked_mut() });
+    debug!("add peer {:?}: {fd} ({arg:?})", peer_nonnull.as_ptr());
+    unsafe {
+        Pin::new_unchecked(tp.peers.assume_init_mut())
+            .push_back(MBox::into_non_null_raw(Pin::into_inner_unchecked(peer)));
+    }
+
+    update_event(unsafe { peer_nonnull.as_mut() });
+    peer_nonnull
 }
 
 pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {

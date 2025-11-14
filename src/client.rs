@@ -47,8 +47,8 @@ use crate::{
         cmd_parse_from_arguments, cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer,
         event_base, file_read_cancel, file_read_open, file_write_close, file_write_left,
         file_write_open, global_environ, global_options, global_s_options, global_w_options,
-        imsg_hdr, options_free, proc_add_peer, proc_clear_signals, proc_exit, proc_flush_peer,
-        proc_loop, proc_set_signals, tmuxpeer, tty_term_free_list, tty_term_read_list,
+        imsg_hdr, options_free, proc_clear_signals, proc_exit, proc_flush_peer, proc_loop,
+        proc_set_signals, tmuxpeer, tty_term_free_list, tty_term_read_list,
     },
 };
 
@@ -260,12 +260,13 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
         }
     };
     unsafe {
-        PEER = proc_add_peer(
-            PROC.as_mut().unwrap().as_mut(),
+        PEER = crate::proc::add_peer(
+            &mut PROC.as_mut().unwrap(),
             fd.into_raw_fd(),
             Some(dispatch),
             ptr::null_mut(),
         )
+        .as_ptr()
     };
 
     // Save these before pledge().
