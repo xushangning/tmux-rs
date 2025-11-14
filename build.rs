@@ -54,6 +54,8 @@ fn main() {
         .raw_line("type cmd_retval = crate::cmd::Retval;")
         .blocklist_type("tty")
         .raw_line("type tty = crate::tty::Tty;")
+        .blocklist_var("server_proc")
+        .raw_line("unsafe extern \"C\" { pub(crate) static mut server_proc: Option<core::pin::Pin<mbox::MBox<tmuxproc>>>; }")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
         .use_core()

@@ -3,6 +3,7 @@
 use core::{
     ffi::{CStr, c_char, c_int, c_uint, c_void},
     mem,
+    pin::Pin,
 };
 use std::{
     env,
@@ -72,7 +73,7 @@ enum Exit {
     MessageProvided(String),
 }
 
-static mut PROC: Option<MBox<Proc>> = None;
+static mut PROC: Option<Pin<MBox<Proc>>> = None;
 static mut PEER: *mut tmuxpeer = ptr::null_mut();
 static FLAGS: Mutex<ClientFlags> = Mutex::new(ClientFlags::empty());
 static mut SUSPENDED: bool = false;
@@ -181,7 +182,12 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlags) -> io::Result
         // 	close(lockfd);
         // 	return (-1);
         // }
-        let stream = crate::server::start(unsafe { PROC.as_mut().unwrap() }, flags, base, lock);
+        let stream = crate::server::start(
+            unsafe { PROC.as_mut().unwrap().as_mut() },
+            flags,
+            base,
+            lock,
+        );
         stream.set_nonblocking(true).unwrap();
         break Ok(stream);
     }
@@ -190,7 +196,7 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlags) -> io::Result
 fn exit() {
     unsafe {
         if file_write_left(&raw mut FILES) == 0 {
-            proc_exit(PROC.as_mut().unwrap().as_mut());
+            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
         }
     }
 }
@@ -235,7 +241,10 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
     unsafe {
         // Create client process structure (starts logging).
         PROC = Some(crate::proc::start("client"));
-        proc_set_signals(PROC.as_mut().unwrap().as_mut(), Some(signal));
+        proc_set_signals(
+            PROC.as_mut().unwrap().as_mut().get_unchecked_mut(),
+            Some(signal),
+        );
     }
 
     // Save the flags.
@@ -261,7 +270,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
     };
     unsafe {
         PEER = crate::proc::add_peer(
-            &mut PROC.as_mut().unwrap(),
+            PROC.as_mut().unwrap().as_mut(),
             fd.into_raw_fd(),
             Some(dispatch),
             ptr::null_mut(),
@@ -409,7 +418,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
 
     // Start main loop.
     unsafe {
-        proc_loop(PROC.as_mut().unwrap().as_mut(), None);
+        proc_loop(PROC.as_mut().unwrap().as_mut().get_unchecked_mut(), None);
     }
 
     // Run command if user requested exec, instead of exiting.
@@ -580,7 +589,7 @@ fn exec(shell: &Path, shell_cmd: &OsStr) -> ! {
     debug!("shell {}, command {}", shell.display(), shell_cmd.display());
 
     unsafe {
-        proc_clear_signals(PROC.as_mut().unwrap().as_mut(), 1);
+        proc_clear_signals(PROC.as_mut().unwrap().as_mut().get_unchecked_mut(), 1);
     }
 
     setblocking(io::stdin().as_raw_fd(), 1);
@@ -620,7 +629,7 @@ extern "C" fn signal(sig: c_int) {
     } else if unsafe { !ATTACHED } {
         if sig == Signal::SIGTERM || sig == Signal::SIGHUP {
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut());
+                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
             }
         }
     } else {
@@ -678,7 +687,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, _arg: *mut c_void) {
                 *EXIT_REASON.lock().unwrap() = Some(Exit::LostServer);
                 EXIT_VAL = 1;
             }
-            proc_exit(PROC.as_mut().unwrap().as_mut());
+            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
         },
         Some(imsg) => {
             if unsafe { ATTACHED } {
@@ -766,7 +775,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
             );
             unsafe {
                 EXIT_VAL = 1;
-                proc_exit(PROC.as_mut().unwrap().as_mut());
+                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
             }
         }
 
@@ -797,7 +806,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
         }
 
         Msg::Exited => unsafe {
-            proc_exit(PROC.as_mut().unwrap().as_mut());
+            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
         },
 
         Msg::ReadOpen => unsafe {
@@ -843,7 +852,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
         Msg::OldStderr | Msg::OldStdin | Msg::OldStdout => {
             eprintln!("server version is too old for client");
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut());
+                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
             }
         }
 
@@ -921,7 +930,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
             }
 
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut());
+                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
             }
         }
 

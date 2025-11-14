@@ -1,7 +1,6 @@
 pub mod tailq {
     use core::{
         marker::PhantomPinned,
-        mem::MaybeUninit,
         pin::Pin,
         ptr::{self, NonNull},
     };
@@ -14,18 +13,9 @@ pub mod tailq {
     pub struct Head<T, const OFFSET: usize>(Entry<T>, PhantomPinned);
 
     impl<T, const OFFSET: usize> Head<T, OFFSET> {
-        pub fn new(uninit: Pin<&mut MaybeUninit<Self>>) -> Pin<&mut Self> {
+        pub fn init(out: NonNull<Self>) {
             unsafe {
-                uninit.map_unchecked_mut(|uninit| {
-                    Self::init(uninit.as_mut_ptr());
-                    uninit.assume_init_mut()
-                })
-            }
-        }
-
-        pub unsafe fn init(out: *mut Self) {
-            unsafe {
-                let last = NonNull::from(&mut (*out).0);
+                let last = NonNull::from(&mut (*out.as_ptr()).0);
                 out.write(Self(
                     Entry {
                         next: ptr::null_mut(),

@@ -8,7 +8,7 @@ use core::{
     ffi::{CStr, c_int, c_short, c_void},
     mem::{self, MaybeUninit},
     pin::Pin,
-    ptr,
+    ptr::{self, NonNull},
 };
 use std::{
     ffi::{CString, OsStr},
@@ -32,7 +32,6 @@ use libc::{
     WUNTRACED, timeval,
 };
 use log::debug;
-use mbox::MBox;
 use nix::{
     errno::Errno,
     sys::{
@@ -124,7 +123,7 @@ extern "C" fn tidy_event(_fd: c_int, _events: c_short, _data: *mut c_void) {
 
 /// Fork new server.
 pub(crate) fn start(
-    client: &mut Proc,
+    client: Pin<&mut Proc>,
     flags: ClientFlags,
     base: *mut event_base,
     lock_file: Option<File>,
@@ -143,7 +142,7 @@ pub(crate) fn start(
         fd = Some(sock);
     }
     unsafe {
-        proc_clear_signals(client, 0);
+        proc_clear_signals(client.get_unchecked_mut(), 0);
         CLIENT_FLAGS = flags;
     }
 
@@ -151,11 +150,18 @@ pub(crate) fn start(
         panic!("event_reinit failed");
     }
     unsafe {
-        crate::tmux_sys::server_proc = MBox::into_raw(crate::proc::start("server"));
+        crate::tmux_sys::server_proc = Some(crate::proc::start("server"));
     }
 
     unsafe {
-        proc_set_signals(crate::tmux_sys::server_proc, Some(signal));
+        proc_set_signals(
+            crate::tmux_sys::server_proc
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .get_unchecked_mut(),
+            Some(signal),
+        );
     }
     sigprocmask(SigmaskHow::SIG_SETMASK, Some(&oldset), None).unwrap();
 
@@ -175,10 +181,14 @@ pub(crate) fn start(
         utf8_update_width_cache();
         crate::tmux_sys::windows = Default::default();
         crate::tmux_sys::all_window_panes = Default::default();
-        tailq::Head::new(Pin::new_unchecked(&mut crate::tmux_sys::clients));
+        tailq::Head::init(NonNull::new_unchecked(
+            crate::tmux_sys::clients.as_mut_ptr(),
+        ));
         crate::tmux_sys::sessions = Default::default();
         key_bindings_init();
-        tailq::Head::new(Pin::new_unchecked(&mut crate::tmux_sys::message_log));
+        tailq::Head::init(NonNull::new_unchecked(
+            crate::tmux_sys::message_log.as_mut_ptr(),
+        ));
         libc::gettimeofday(&mut crate::tmux_sys::start_time, ptr::null_mut());
     }
 
@@ -230,7 +240,14 @@ pub(crate) fn start(
         server_acl_init();
 
         add_accept(0);
-        proc_loop(crate::tmux_sys::server_proc, Some(loop_));
+        proc_loop(
+            crate::tmux_sys::server_proc
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .get_unchecked_mut(),
+            Some(loop_),
+        );
 
         job_kill_all();
         status_prompt_save_history();
@@ -462,7 +479,13 @@ extern "C" fn signal(sig: c_int) {
             add_accept(0);
         },
         SIGUSR2 => unsafe {
-            proc_toggle_log(crate::tmux_sys::server_proc);
+            proc_toggle_log(
+                crate::tmux_sys::server_proc
+                    .as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .get_unchecked_mut(),
+            );
         },
         _ => {}
     }

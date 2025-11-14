@@ -102,7 +102,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     let c_ptr = &raw mut *c.as_mut();
     c.references = 1;
     c.peer = crate::proc::add_peer(
-        unsafe { crate::tmux_sys::server_proc.as_mut().unwrap() },
+        unsafe { crate::tmux_sys::server_proc.as_mut().unwrap().as_mut() },
         sock.into_raw_fd(),
         Some(dispatch),
         c_ptr.cast(),

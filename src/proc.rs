@@ -19,6 +19,7 @@ use libc::uid_t;
 use log::debug;
 use mbox::MBox;
 use nix::{errno::Errno, unistd::ForkResult};
+use pin_project::pin_project;
 
 use crate::{
     compat::{imsg::IMsg, queue::tailq},
@@ -31,6 +32,7 @@ use crate::{
 };
 
 #[repr(C)]
+#[pin_project]
 pub struct Proc {
     name: *const c_char,
     exit: c_int,
@@ -46,7 +48,18 @@ pub struct Proc {
     ev_sigusr2: crate::tmux_sys::event,
     ev_sigwinch: crate::tmux_sys::event,
 
-    peers: MaybeUninit<tailq::Head<Peer, { mem::offset_of!(Peer, entry) }>>,
+    #[pin]
+    peers: tailq::Head<Peer, { mem::offset_of!(Peer, entry) }>,
+}
+
+impl Proc {
+    fn init(out: NonNull<Self>, name: &str) {
+        let out = out.as_ptr();
+        unsafe {
+            (&raw mut (*out).name).write(xstrdup(CString::new(name).unwrap().as_ptr()));
+            tailq::Head::init(NonNull::from_mut(&mut (*out).peers));
+        }
+    }
 }
 
 bitflags! {
@@ -217,7 +230,7 @@ pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u
     Some(())
 }
 
-pub(crate) fn start(name: &str) -> MBox<Proc> {
+pub(crate) fn start(name: &str) -> Pin<MBox<Proc>> {
     crate::log::open(name);
     let socket_path = Path::new(OsStr::from_bytes(
         unsafe { CStr::from_ptr(crate::tmux_sys::socket_path) }.to_bytes(),
@@ -254,16 +267,16 @@ pub(crate) fn start(name: &str) -> MBox<Proc> {
     // #endif
 
     unsafe {
-        let mut tp =
-            MBox::from_raw(crate::tmux_sys::xcalloc(1, mem::size_of::<Proc>()).cast::<Proc>());
-        tp.name = xstrdup(CString::new(name).unwrap().as_ptr());
-        tailq::Head::new(Pin::new_unchecked(&mut tp.peers));
-        tp
+        let mut tp = MBox::from_raw(
+            crate::tmux_sys::xcalloc(1, mem::size_of::<Proc>()).cast::<MaybeUninit<Proc>>(),
+        );
+        Proc::init(NonNull::new_unchecked(tp.as_mut_ptr()), name);
+        MBox::into_pin(tp.assume_init())
     }
 }
 
 pub(crate) fn add_peer(
-    tp: &mut Proc,
+    mut tp: Pin<&mut Proc>,
     fd: RawFd,
     dispatchcb: Option<unsafe extern "C" fn(arg1: *mut IMsg, arg2: *mut c_void)>,
     arg: *mut c_void,
@@ -272,14 +285,21 @@ pub(crate) fn add_peer(
         let mut peer = MBox::from_raw(
             crate::tmux_sys::xcalloc(1, mem::size_of::<Peer>()).cast::<MaybeUninit<Peer>>(),
         );
-        Peer::init(&mut peer, NonNull::from_mut(tp), fd, dispatchcb, arg);
+        Peer::init(
+            &mut peer,
+            NonNull::from_mut(tp.as_mut().get_unchecked_mut()),
+            fd,
+            dispatchcb,
+            arg,
+        );
         MBox::into_pin(peer.assume_init())
     };
 
     let mut peer_nonnull = NonNull::from_mut(unsafe { peer.as_mut().get_unchecked_mut() });
     debug!("add peer {:?}: {fd} ({arg:?})", peer_nonnull.as_ptr());
     unsafe {
-        Pin::new_unchecked(tp.peers.assume_init_mut())
+        tp.project()
+            .peers
             .push_back(MBox::into_non_null_raw(Pin::into_inner_unchecked(peer)));
     }
 

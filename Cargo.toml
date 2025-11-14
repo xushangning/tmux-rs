@@ -18,6 +18,7 @@ libc = "0.2.174"
 log = "0.4.27"
 mbox = "0.7.1"
 nix = { version = "0.30.1", features = ["feature", "fs", "process", "signal", "socket", "term", "user"] }
+pin-project = "1.1.10"
 spdlog-rs = { version = "0.5.1", features = ["log"] }
 thiserror = "2.0.12"
 
