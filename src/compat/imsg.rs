@@ -1,19 +1,51 @@
 use core::{
     ffi::{c_int, c_uchar, c_void},
+    marker::PhantomPinned,
     mem::{self, MaybeUninit, offset_of},
-    ptr::NonNull,
+    ptr::{self, NonNull},
 };
-use std::os::fd::{IntoRawFd, OwnedFd};
+use std::os::fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 use bytemuck::NoUninit;
 use mbox::MBox;
 use nix::unistd::Pid;
 
-use crate::{compat::queue::tailq, tmux_sys::imsgbuf};
+use crate::compat::queue::tailq;
 
 pub const HEADER_SIZE: usize = core::mem::size_of::<Hdr>();
+pub const MAX_IMSG_SIZE: u32 = 16384;
 
-const FD_MARK: usize = 0x80000000;
+const FD_MARK: u32 = 0x80000000;
+
+#[repr(C)]
+pub struct Buf {
+    w: NonNull<crate::tmux_sys::msgbuf>,
+    pid: libc::pid_t,
+    maxsize: u32,
+    pub fd: c_int,
+    flags: c_int,
+    _pin: PhantomPinned,
+}
+
+impl Buf {
+    pub fn init(out: NonNull<Self>, fd: RawFd) -> nix::Result<()> {
+        let w = NonNull::new(unsafe {
+            crate::tmux_sys::msgbuf_new_reader(HEADER_SIZE, Some(parse_hdr), out.as_ptr().cast())
+        })
+        .ok_or_else(|| nix::Error::last())?;
+        unsafe {
+            out.write(Self {
+                w,
+                pid: libc::getpid(),
+                maxsize: MAX_IMSG_SIZE,
+                fd,
+                flags: 0,
+                _pin: PhantomPinned,
+            });
+        }
+        Ok(())
+    }
+}
 
 #[repr(C)]
 pub struct IBuf {
@@ -195,7 +227,7 @@ pub struct IMsg {
 }
 
 pub(crate) fn compose(
-    imsg_buf: &mut imsgbuf,
+    imsg_buf: &mut Buf,
     type_: u32,
     id: u32,
     pid: Option<Pid>,
@@ -213,7 +245,7 @@ pub(crate) fn compose(
 }
 
 pub(crate) fn create(
-    imsg_buf: &mut imsgbuf,
+    imsg_buf: &mut Buf,
     type_: u32,
     id: u32,
     pid: Option<Pid>,
@@ -239,14 +271,41 @@ pub(crate) fn create(
     wbuf.add(bytemuck::bytes_of(&hdr)).map(|_| wbuf)
 }
 
-pub(crate) fn close(imsg_buf: &mut imsgbuf, mut msg: MBox<IBuf>) {
+pub(crate) fn close(imsg_buf: &mut Buf, mut msg: MBox<IBuf>) {
     let mut len = msg.size();
     if msg.fd_avail() {
-        len |= FD_MARK;
+        len |= FD_MARK as usize;
     }
     msg.set_h32(offset_of!(Hdr, len), len.try_into().unwrap())
         .unwrap();
     unsafe {
-        crate::tmux_sys::ibuf_close(imsg_buf.w, MBox::into_raw(msg));
+        crate::tmux_sys::ibuf_close(imsg_buf.w.as_ptr(), MBox::into_raw(msg));
     }
+}
+
+extern "C" fn parse_hdr(buf: *mut IBuf, arg: *mut c_void, fd: *mut RawFd) -> *mut IBuf {
+    let mut hdr = MaybeUninit::<Hdr>::uninit();
+    if unsafe { crate::tmux_sys::ibuf_get(buf, hdr.as_mut_ptr().cast(), size_of_val(&hdr)) } == -1 {
+        return ptr::null_mut();
+    }
+
+    let hdr = unsafe { hdr.assume_init_ref() };
+    let len = hdr.len & !FD_MARK;
+
+    let imsgbuf = unsafe { arg.cast::<Buf>().as_mut().unwrap() };
+    if (len as usize) < HEADER_SIZE || len > imsgbuf.maxsize {
+        nix::Error::ERANGE.set();
+        return ptr::null_mut();
+    }
+    let Some(mut b) = NonNull::new(unsafe { crate::tmux_sys::ibuf_open(len as usize) }) else {
+        return ptr::null_mut();
+    };
+    if hdr.len & FD_MARK != 0 {
+        unsafe {
+            b.as_mut().fd_set(Some(OwnedFd::from_raw_fd(*fd)));
+            fd.write(-1);
+        }
+    }
+
+    b.as_ptr()
 }

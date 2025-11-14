@@ -22,12 +22,15 @@ use nix::{errno::Errno, unistd::ForkResult};
 use pin_project::pin_project;
 
 use crate::{
-    compat::{imsg::IMsg, queue::tailq},
+    compat::{
+        imsg::{Buf as IMsgBuf, IMsg},
+        queue::tailq,
+    },
     protocol::Msg,
     tmux_sys::{
         EV_READ, EV_WRITE, PROTOCOL_VERSION, event_add, event_del, event_get_method,
-        event_get_version, event_set, imsg, imsg_free, imsg_get, imsgbuf, imsgbuf_queuelen,
-        imsgbuf_read, imsgbuf_write, xstrdup,
+        event_get_version, event_set, imsg, imsg_free, imsg_get, imsgbuf_queuelen, imsgbuf_read,
+        imsgbuf_write, xstrdup,
     },
 };
 
@@ -73,7 +76,7 @@ bitflags! {
 pub struct Peer {
     parent: *mut Proc,
 
-    ibuf: imsgbuf,
+    ibuf: IMsgBuf,
     event: crate::tmux_sys::event,
     uid: uid_t,
 
@@ -86,28 +89,22 @@ pub struct Peer {
 
 impl Peer {
     fn init(
-        uninit: &mut MaybeUninit<Self>,
+        out: NonNull<Self>,
         parent: NonNull<Proc>,
         fd: RawFd,
         dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
         arg: *mut c_void,
     ) {
-        let ptr = uninit.as_mut_ptr();
+        let ptr = out.as_ptr();
         unsafe {
-            ptr.write(Self {
-                parent: parent.as_ptr(),
-                ibuf: mem::zeroed(),
-                event: mem::zeroed(),
-                uid: 0,
-                flags: PeerFlag::empty(),
-                dispatchcb,
-                arg,
-                entry: MaybeUninit::uninit(),
-            });
+            (&raw mut (*ptr).flags).write(PeerFlag::empty());
 
-            if crate::tmux_sys::imsgbuf_init(&mut (*ptr).ibuf, fd) == -1 {
-                Result::<(), _>::Err(nix::Error::last()).expect("imsgbuf_init");
-            }
+            (&raw mut (*ptr).parent).write(parent.as_ptr());
+
+            (&raw mut (*ptr).dispatchcb).write(dispatchcb);
+            (&raw mut (*ptr).arg).write(arg);
+
+            IMsgBuf::init(NonNull::from_mut(&mut (*ptr).ibuf), fd).expect("imsgbuf_init");
             crate::tmux_sys::imsgbuf_allow_fdpass(&mut (*ptr).ibuf);
             event_set(
                 &mut (*ptr).event,
@@ -286,7 +283,7 @@ pub(crate) fn add_peer(
             crate::tmux_sys::xcalloc(1, mem::size_of::<Peer>()).cast::<MaybeUninit<Peer>>(),
         );
         Peer::init(
-            &mut peer,
+            NonNull::new_unchecked(peer.as_mut_ptr()),
             NonNull::from_mut(tp.as_mut().get_unchecked_mut()),
             fd,
             dispatchcb,
