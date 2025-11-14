@@ -495,22 +495,27 @@ extern "C" fn signal(sig: c_int) {
 fn child_signal() {
     loop {
         let mut status: c_int = 0;
-        let pid = unsafe { libc::waitpid(WAIT_ANY, &mut status, WNOHANG | WUNTRACED) };
-        if pid == -1 {
-            let err = Errno::last();
-            match err {
+        match nix::Error::result(unsafe {
+            // We have to pass the status bit set as-is to other functions, so
+            // this can't really be rewritten to use nix::sys::wait::waitpid.
+            libc::waitpid(WAIT_ANY, &mut status, WNOHANG | WUNTRACED)
+        }) {
+            Err(err) => match err {
                 Errno::ECHILD => return,
                 _ => Err(err).expect("waitpid failed"),
+            },
+            Ok(pid) => {
+                if pid == 0 {
+                    return;
+                }
+                match WaitStatus::from_raw(Pid::from_raw(pid), status).unwrap() {
+                    WaitStatus::Stopped(pid, sig) => child_stopped(pid, sig, status),
+                    WaitStatus::Exited(pid, _) | WaitStatus::Signaled(pid, _, _) => {
+                        child_exited(pid, status)
+                    }
+                    _ => {}
+                };
             }
-        } else if pid == 0 {
-            return;
-        }
-        match WaitStatus::from_raw(Pid::from_raw(pid), status).unwrap() {
-            WaitStatus::Stopped(pid, sig) => child_stopped(pid, sig, status),
-            WaitStatus::Exited(pid, _) | WaitStatus::Signaled(pid, _, _) => {
-                child_exited(pid, status)
-            }
-            _ => {}
         }
     }
 }
