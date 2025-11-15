@@ -226,6 +226,16 @@ pub struct IMsg {
     buf: *mut IBuf,
 }
 
+impl Drop for IMsg {
+    fn drop(&mut self) {
+        if !self.buf.is_null() {
+            unsafe {
+                self.buf.drop_in_place();
+            }
+        }
+    }
+}
+
 pub(crate) fn compose(
     imsg_buf: &mut Buf,
     type_: u32,

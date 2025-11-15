@@ -32,7 +32,7 @@ use crate::{
     protocol::Msg,
     tmux_sys::{
         EV_READ, EV_WRITE, event_add, event_del, event_get_method, event_get_version, event_set,
-        imsg_free, imsg_get, imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, xstrdup,
+        imsg_get, imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, xstrdup,
     },
 };
 
@@ -299,16 +299,14 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
                     break;
                 }
 
-                let imsg = imsg.assume_init_mut();
+                let mut imsg = imsg.assume_init();
                 debug!("peer {peer:p} message {}", imsg.hdr.type_);
 
-                if !peer_check_version(peer, imsg) {
-                    imsg_free(imsg);
+                if !peer_check_version(peer, &imsg) {
                     break;
                 }
 
-                peer.dispatchcb.unwrap()(imsg, peer.arg);
-                imsg_free(imsg);
+                peer.dispatchcb.unwrap()(&mut imsg, peer.arg);
             }
         }
 
