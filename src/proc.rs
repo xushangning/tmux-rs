@@ -176,7 +176,7 @@ impl Proc {
 
 bitflags! {
     #[repr(C)]
-    pub struct PeerFlag: c_int {
+    pub struct PeerFlags: c_int {
         const BAD = 1;
     }
 }
@@ -189,7 +189,7 @@ pub struct Peer {
     event: crate::tmux_sys::event,
     uid: uid_t,
 
-    flags: PeerFlag,
+    flags: PeerFlags,
     dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
     arg: *mut c_void,
 
@@ -206,7 +206,7 @@ impl Peer {
     ) {
         let ptr = out.as_ptr();
         unsafe {
-            (&raw mut (*ptr).flags).write(PeerFlag::empty());
+            (&raw mut (*ptr).flags).write(PeerFlags::empty());
 
             (&raw mut (*ptr).parent).write(parent.as_ptr());
 
@@ -251,7 +251,7 @@ impl Peer {
     }
 
     pub(crate) fn send(&mut self, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u8]) -> Option<()> {
-        if self.flags.intersects(PeerFlag::BAD) {
+        if self.flags.intersects(PeerFlags::BAD) {
             return None;
         }
         debug!(
@@ -283,7 +283,7 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
     let peer = unsafe { &mut *(arg as *mut Peer) };
 
     unsafe {
-        if !peer.flags.intersects(PeerFlag::BAD) && (events & EV_READ as i16) != 0 {
+        if !peer.flags.intersects(PeerFlags::BAD) && (events & EV_READ as i16) != 0 {
             if imsgbuf_read(&mut peer.ibuf) != 1 {
                 peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
                 return;
@@ -320,7 +320,7 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
             }
         }
 
-        if peer.flags.intersects(PeerFlag::BAD) && imsgbuf_queuelen(&mut peer.ibuf) == 0 {
+        if peer.flags.intersects(PeerFlags::BAD) && imsgbuf_queuelen(&mut peer.ibuf) == 0 {
             peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
             return;
         }
@@ -340,7 +340,7 @@ fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
         debug!("peer {:p} bad version {}", peer, version);
 
         peer.send(Msg::Version, None, &[]);
-        peer.flags |= PeerFlag::BAD;
+        peer.flags |= PeerFlags::BAD;
 
         return false;
     }
@@ -440,5 +440,5 @@ pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
 }
 
 pub(crate) fn kill_peer(peer: &mut Peer) {
-    peer.flags |= PeerFlag::BAD;
+    peer.flags |= PeerFlags::BAD;
 }
