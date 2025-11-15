@@ -133,6 +133,40 @@ impl Proc {
         }
     }
 
+    pub(crate) fn add_peer(
+        mut self: Pin<&mut Proc>,
+        fd: RawFd,
+        dispatchcb: Option<unsafe extern "C" fn(arg1: *mut IMsg, arg2: *mut c_void)>,
+        arg: *mut c_void,
+    ) -> NonNull<Peer> {
+        let mut peer = unsafe {
+            let mut peer = MBox::from_raw(
+                crate::tmux_sys::xcalloc(1, mem::size_of::<Peer>()).cast::<MaybeUninit<Peer>>(),
+            );
+            Peer::init(
+                NonNull::new_unchecked(peer.as_mut_ptr()),
+                NonNull::from_mut(self.as_mut().get_unchecked_mut()),
+                fd,
+                dispatchcb,
+                arg,
+            );
+            MBox::into_pin(peer.assume_init())
+        };
+
+        let mut peer_nonnull = NonNull::from_mut(unsafe { peer.as_mut().get_unchecked_mut() });
+        debug!("add peer {:?}: {fd} ({arg:?})", peer_nonnull.as_ptr());
+        unsafe {
+            self.project()
+                .peers
+                .push_back(MBox::into_non_null_raw(Pin::into_inner_unchecked(peer)));
+        }
+
+        unsafe {
+            peer_nonnull.as_mut().update_event();
+        }
+        peer_nonnull
+    }
+
     pub(crate) fn toggle_log(&self) {
         unsafe {
             crate::tmux_sys::log_toggle(self.name);
@@ -195,6 +229,54 @@ impl Peer {
             }
         }
     }
+
+    fn update_event(&mut self) {
+        unsafe {
+            event_del(&mut self.event);
+
+            let mut events = EV_READ as c_short;
+            if imsgbuf_queuelen(&mut self.ibuf) > 0 {
+                events |= EV_WRITE as c_short;
+            }
+            event_set(
+                &mut self.event,
+                self.ibuf.fd,
+                events,
+                Some(event_cb),
+                self as *mut _ as *mut c_void,
+            );
+
+            event_add(&mut self.event, ptr::null_mut());
+        }
+    }
+
+    pub(crate) fn send(&mut self, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u8]) -> Option<()> {
+        if self.flags.intersects(PeerFlag::BAD) {
+            return None;
+        }
+        debug!(
+            "sending message {msg_type:?} to peer {self:p} ({} bytes)",
+            buf.len()
+        );
+
+        crate::compat::imsg::compose(
+            &mut self.ibuf,
+            unsafe { mem::transmute(msg_type) },
+            crate::protocol::VERSION.try_into().unwrap(),
+            None,
+            fd,
+            buf,
+        )
+        .ok()?;
+        self.update_event();
+        Some(())
+    }
+
+    pub(crate) fn flush(&mut self) {
+        unsafe {
+            crate::tmux_sys::imsgbuf_flush(&mut self.ibuf);
+        }
+    }
 }
 
 extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
@@ -244,7 +326,7 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
         }
     }
 
-    update_event(peer);
+    peer.update_event();
 }
 
 extern "C" fn signal_cb(signo: c_int, _events: c_short, arg: *mut c_void) {
@@ -257,54 +339,12 @@ fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
     if imsg.hdr.type_ != unsafe { mem::transmute(Msg::Version) } && version != PROTOCOL_VERSION {
         debug!("peer {:p} bad version {}", peer, version);
 
-        send(peer, Msg::Version, None, &[]);
+        peer.send(Msg::Version, None, &[]);
         peer.flags |= PeerFlag::BAD;
 
         return false;
     }
     true
-}
-
-fn update_event(peer: &mut Peer) {
-    unsafe {
-        event_del(&mut peer.event);
-
-        let mut events = EV_READ as c_short;
-        if imsgbuf_queuelen(&mut peer.ibuf) > 0 {
-            events |= EV_WRITE as c_short;
-        }
-        event_set(
-            &mut peer.event,
-            peer.ibuf.fd,
-            events,
-            Some(event_cb),
-            peer as *mut _ as *mut c_void,
-        );
-
-        event_add(&mut peer.event, ptr::null_mut());
-    }
-}
-
-pub(crate) fn send(peer: &mut Peer, msg_type: Msg, fd: Option<OwnedFd>, buf: &[u8]) -> Option<()> {
-    if peer.flags.intersects(PeerFlag::BAD) {
-        return None;
-    }
-    debug!(
-        "sending message {msg_type:?} to peer {peer:p} ({} bytes)",
-        buf.len()
-    );
-
-    crate::compat::imsg::compose(
-        &mut peer.ibuf,
-        unsafe { mem::transmute(msg_type) },
-        crate::protocol::VERSION.try_into().unwrap(),
-        None,
-        fd,
-        buf,
-    )
-    .ok()?;
-    update_event(peer);
-    Some(())
 }
 
 pub(crate) fn start(name: &str) -> Pin<MBox<Proc>> {
@@ -386,38 +426,6 @@ pub(crate) fn exit(tp: Pin<&mut Proc>) {
     *tp.project().exit = 1;
 }
 
-pub(crate) fn add_peer(
-    mut tp: Pin<&mut Proc>,
-    fd: RawFd,
-    dispatchcb: Option<unsafe extern "C" fn(arg1: *mut IMsg, arg2: *mut c_void)>,
-    arg: *mut c_void,
-) -> NonNull<Peer> {
-    let mut peer = unsafe {
-        let mut peer = MBox::from_raw(
-            crate::tmux_sys::xcalloc(1, mem::size_of::<Peer>()).cast::<MaybeUninit<Peer>>(),
-        );
-        Peer::init(
-            NonNull::new_unchecked(peer.as_mut_ptr()),
-            NonNull::from_mut(tp.as_mut().get_unchecked_mut()),
-            fd,
-            dispatchcb,
-            arg,
-        );
-        MBox::into_pin(peer.assume_init())
-    };
-
-    let mut peer_nonnull = NonNull::from_mut(unsafe { peer.as_mut().get_unchecked_mut() });
-    debug!("add peer {:?}: {fd} ({arg:?})", peer_nonnull.as_ptr());
-    unsafe {
-        tp.project()
-            .peers
-            .push_back(MBox::into_non_null_raw(Pin::into_inner_unchecked(peer)));
-    }
-
-    update_event(unsafe { peer_nonnull.as_mut() });
-    peer_nonnull
-}
-
 pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
     let (parent_sock, child_sock) = UnixStream::pair().expect("socketpair failed");
     match unsafe { nix::unistd::fork() }.expect("fork failed") {
@@ -433,10 +441,4 @@ pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
 
 pub(crate) fn kill_peer(peer: &mut Peer) {
     peer.flags |= PeerFlag::BAD;
-}
-
-pub(crate) fn flush_peer(peer: &mut Peer) {
-    unsafe {
-        crate::tmux_sys::imsgbuf_flush(&mut peer.ibuf);
-    }
 }

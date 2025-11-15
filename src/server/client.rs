@@ -101,13 +101,9 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     };
     let c_ptr = &raw mut *c.as_mut();
     c.references = 1;
-    c.peer = crate::proc::add_peer(
-        unsafe { crate::tmux_sys::server_proc.as_mut().unwrap().as_mut() },
-        sock.into_raw_fd(),
-        Some(dispatch),
-        c_ptr.cast(),
-    )
-    .as_ptr();
+    c.peer = unsafe { crate::tmux_sys::server_proc.as_mut().unwrap().as_mut() }
+        .add_peer(sock.into_raw_fd(), Some(dispatch), c_ptr.cast())
+        .as_ptr();
 
     Errno::result(unsafe { gettimeofday(&mut c.creation_time, ptr::null_mut()) })
         .expect("gettimeofday failed");
@@ -482,14 +478,14 @@ fn check_exit(c: &mut Client) {
                 let msg = unsafe { CStr::from_ptr(c.exit_message) };
                 data.extend_from_slice(msg.to_bytes_with_nul());
             }
-            crate::proc::send(peer, Msg::Exit, None, &data);
+            peer.send(Msg::Exit, None, &data);
         }
         ClientExitType::Shutdown => {
-            crate::proc::send(peer, Msg::Shutdown, None, &[]);
+            peer.send(Msg::Shutdown, None, &[]);
         }
         ClientExitType::Detach => {
             let name = unsafe { CStr::from_ptr(c.exit_session) };
-            crate::proc::send(peer, c.exit_msgtype, None, name.to_bytes_with_nul());
+            peer.send(c.exit_msgtype, None, name.to_bytes_with_nul());
         }
     }
     unsafe {
@@ -1061,7 +1057,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
             unsafe {
                 recalculate_sizes();
                 tty_close(&mut c.tty);
-                crate::proc::send(&mut *c.peer, Msg::Exited, None, &[]);
+                c.peer.as_mut().unwrap().send(Msg::Exited, None, &[]);
             }
         }
         WakeUp | Unlock => {
@@ -1440,12 +1436,10 @@ fn dispatch_shell(c: &mut Client) {
         if checkshell(shell) == 0 {
             shell = _PATH_BSHELL.as_ptr();
         }
-        crate::proc::send(
-            &mut *c.peer,
-            Msg::Shell,
-            None,
-            CStr::from_ptr(shell).to_bytes_with_nul(),
-        );
+        c.peer
+            .as_mut()
+            .unwrap()
+            .send(Msg::Shell, None, CStr::from_ptr(shell).to_bytes_with_nul());
     }
     crate::proc::kill_peer(unsafe { &mut *c.peer });
 }
