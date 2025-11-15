@@ -30,7 +30,7 @@ use crate::{
         control_ready, control_start, environ_put, evbuffer_get_length, event_del,
         event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
         global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
-        notify_client, options_get_command, options_get_number, options_get_string, proc_kill_peer,
+        notify_client, options_get_command, options_get_number, options_get_string,
         recalculate_size, recalculate_sizes, server_client_handle_key, server_client_lost,
         server_redraw_client, session_update_activity, start_cfg, status_at_line, status_init,
         status_line_size, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
@@ -1446,9 +1446,8 @@ fn dispatch_shell(c: &mut Client) {
             None,
             CStr::from_ptr(shell).to_bytes_with_nul(),
         );
-
-        proc_kill_peer(c.peer);
     }
+    crate::proc::kill_peer(unsafe { &mut *c.peer });
 }
 
 impl Client {

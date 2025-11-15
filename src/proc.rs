@@ -132,6 +132,12 @@ impl Proc {
             }
         }
     }
+
+    pub(crate) fn toggle_log(&self) {
+        unsafe {
+            crate::tmux_sys::log_toggle(self.name);
+        }
+    }
 }
 
 bitflags! {
@@ -422,5 +428,15 @@ pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
             (ForkResult::Child, child_sock)
         }
         ForkResult::Parent { child } => (ForkResult::Parent { child }, parent_sock),
+    }
+}
+
+pub(crate) fn kill_peer(peer: &mut Peer) {
+    peer.flags |= PeerFlag::BAD;
+}
+
+pub(crate) fn flush_peer(peer: &mut Peer) {
+    unsafe {
+        crate::tmux_sys::imsgbuf_flush(&mut peer.ibuf);
     }
 }

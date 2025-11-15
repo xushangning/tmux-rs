@@ -51,7 +51,7 @@ use crate::{
         EV_READ, WAIT_ANY, cmd_wait_for_flush, cmdq_next, event_add, event_base, event_del,
         event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
-        options_get_number, options_set_number, proc_toggle_log, server_acl_init, server_acl_join,
+        options_get_number, options_set_number, server_acl_init, server_acl_join,
         server_client_lost, server_destroy_pane, session_destroy, status_prompt_save_history,
         tty_create_log, utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
@@ -475,13 +475,7 @@ extern "C" fn signal(sig: c_int) {
             add_accept(0);
         },
         SIGUSR2 => unsafe {
-            proc_toggle_log(
-                crate::tmux_sys::server_proc
-                    .as_mut()
-                    .unwrap()
-                    .as_mut()
-                    .get_unchecked_mut(),
-            );
+            crate::tmux_sys::server_proc.as_ref().unwrap().toggle_log();
         },
         _ => {}
     }
