@@ -18,7 +18,10 @@ use bitflags::bitflags;
 use libc::uid_t;
 use log::debug;
 use mbox::MBox;
-use nix::{errno::Errno, unistd::ForkResult};
+use nix::{
+    sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction},
+    {errno::Errno, unistd::ForkResult},
+};
 use pin_project::pin_project;
 
 use crate::{
@@ -61,6 +64,41 @@ impl Proc {
         unsafe {
             (&raw mut (*out).name).write(xstrdup(CString::new(name).unwrap().as_ptr()));
             tailq::Head::init(NonNull::from_mut(&mut (*out).peers));
+        }
+    }
+
+    pub(crate) fn set_signals(mut self: Pin<&mut Proc>, signalcb: unsafe extern "C" fn(c_int)) {
+        use crate::libevent::signal_set;
+
+        let self_ptr = unsafe { self.as_mut().get_unchecked_mut() as *mut Proc }.cast::<c_void>();
+        let this = self.project();
+
+        *this.signal_cb = Some(signalcb);
+
+        let sa = SigAction::new(SigHandler::SigIgn, SaFlags::SA_RESTART, SigSet::empty());
+        unsafe {
+            _ = sigaction(Signal::SIGPIPE, &sa);
+            _ = sigaction(Signal::SIGTSTP, &sa);
+            _ = sigaction(Signal::SIGTTIN, &sa);
+            _ = sigaction(Signal::SIGTTOU, &sa);
+            _ = sigaction(Signal::SIGQUIT, &sa);
+
+            signal_set(this.ev_sigint, libc::SIGINT, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigint, ptr::null_mut());
+            signal_set(this.ev_sighup, libc::SIGHUP, Some(signal_cb), self_ptr);
+            event_add(this.ev_sighup, ptr::null_mut());
+            signal_set(this.ev_sigchld, libc::SIGCHLD, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigchld, ptr::null_mut());
+            signal_set(this.ev_sigcont, libc::SIGCONT, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigcont, ptr::null_mut());
+            signal_set(this.ev_sigterm, libc::SIGTERM, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigterm, ptr::null_mut());
+            signal_set(this.ev_sigusr1, libc::SIGUSR1, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigusr1, ptr::null_mut());
+            signal_set(this.ev_sigusr2, libc::SIGUSR2, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigusr2, ptr::null_mut());
+            signal_set(this.ev_sigwinch, libc::SIGWINCH, Some(signal_cb), self_ptr);
+            event_add(this.ev_sigwinch, ptr::null_mut());
         }
     }
 }
@@ -170,6 +208,11 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
     }
 
     update_event(peer);
+}
+
+extern "C" fn signal_cb(signo: c_int, _events: c_short, arg: *mut c_void) {
+    let tp = arg.cast::<Proc>();
+    unsafe { (*tp).signal_cb.unwrap()(signo) };
 }
 
 fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
