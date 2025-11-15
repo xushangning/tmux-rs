@@ -272,6 +272,31 @@ pub(crate) fn start(name: &str) -> Pin<MBox<Proc>> {
     }
 }
 
+// tp here must not be an immutable reference, because otherwise the compiler would assume that
+// there doesn't exist a mutable reference to the same Proc instance and that tp.exit's value
+// will never change during the loop, so it may optimize the code by loading tp.exit into a register
+// before entering the loop and checking it only once.
+pub(crate) fn loop_(tp: *const Proc, loopcb: Option<unsafe extern "C" fn() -> c_int>) {
+    use crate::tmux_sys::{EVLOOP_ONCE, event_loop};
+
+    let name = unsafe { CStr::from_ptr((*tp).name).to_str().unwrap() };
+    debug!("{name} loop enter");
+    loop {
+        unsafe {
+            event_loop(EVLOOP_ONCE.try_into().unwrap());
+            if (*tp).exit != 0 {
+                break;
+            }
+        }
+        if let Some(loopcb) = loopcb
+            && unsafe { loopcb() } != 0
+        {
+            break;
+        }
+    }
+    debug!("{name} loop exit");
+}
+
 pub(crate) fn add_peer(
     mut tp: Pin<&mut Proc>,
     fd: RawFd,
