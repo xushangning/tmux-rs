@@ -101,6 +101,37 @@ impl Proc {
             event_add(this.ev_sigwinch, ptr::null_mut());
         }
     }
+
+    pub(crate) fn clear_signals(self: Pin<&mut Self>, defaults: bool) {
+        let sa = SigAction::new(SigHandler::SigDfl, SaFlags::SA_RESTART, SigSet::empty());
+
+        unsafe {
+            _ = sigaction(Signal::SIGPIPE, &sa);
+            _ = sigaction(Signal::SIGTSTP, &sa);
+
+            let this = self.project();
+            event_del(this.ev_sigint);
+            event_del(this.ev_sighup);
+            event_del(this.ev_sigchld);
+            event_del(this.ev_sigcont);
+            event_del(this.ev_sigterm);
+            event_del(this.ev_sigusr1);
+            event_del(this.ev_sigusr2);
+            event_del(this.ev_sigwinch);
+
+            if defaults {
+                _ = sigaction(Signal::SIGINT, &sa);
+                _ = sigaction(Signal::SIGQUIT, &sa);
+                _ = sigaction(Signal::SIGHUP, &sa);
+                _ = sigaction(Signal::SIGCHLD, &sa);
+                _ = sigaction(Signal::SIGCONT, &sa);
+                _ = sigaction(Signal::SIGTERM, &sa);
+                _ = sigaction(Signal::SIGUSR1, &sa);
+                _ = sigaction(Signal::SIGUSR2, &sa);
+                _ = sigaction(Signal::SIGWINCH, &sa);
+            }
+        }
+    }
 }
 
 bitflags! {
