@@ -371,6 +371,15 @@ pub(crate) fn loop_(tp: *const Proc, loopcb: Option<unsafe extern "C" fn() -> c_
     debug!("{name} loop exit");
 }
 
+pub(crate) fn exit(tp: Pin<&mut Proc>) {
+    for mut peer in &tp.peers {
+        unsafe {
+            crate::tmux_sys::imsgbuf_flush(&mut peer.as_mut().ibuf);
+        }
+    }
+    *tp.project().exit = 1;
+}
+
 pub(crate) fn add_peer(
     mut tp: Pin<&mut Proc>,
     fd: RawFd,

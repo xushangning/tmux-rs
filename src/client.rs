@@ -48,8 +48,7 @@ use crate::{
         cmd_parse_from_arguments, cmd_parse_status_CMD_PARSE_SUCCESS, environ_free, evbuffer,
         event_base, file_read_cancel, file_read_open, file_write_close, file_write_left,
         file_write_open, global_environ, global_options, global_s_options, global_w_options,
-        imsg_hdr, options_free, proc_exit, proc_flush_peer, tmuxpeer, tty_term_free_list,
-        tty_term_read_list,
+        imsg_hdr, options_free, proc_flush_peer, tmuxpeer, tty_term_free_list, tty_term_read_list,
     },
 };
 
@@ -196,7 +195,7 @@ fn connect(base: *mut event_base, path: &Path, flags: ClientFlags) -> io::Result
 fn exit() {
     unsafe {
         if file_write_left(&raw mut FILES) == 0 {
-            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+            crate::proc::exit(PROC.as_mut().unwrap().as_mut());
         }
     }
 }
@@ -624,7 +623,7 @@ extern "C" fn signal(sig: c_int) {
     } else if unsafe { !ATTACHED } {
         if sig == Signal::SIGTERM || sig == Signal::SIGHUP {
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+                crate::proc::exit(PROC.as_mut().unwrap().as_mut());
             }
         }
     } else {
@@ -682,7 +681,7 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, _arg: *mut c_void) {
                 *EXIT_REASON.lock().unwrap() = Some(Exit::LostServer);
                 EXIT_VAL = 1;
             }
-            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+            crate::proc::exit(PROC.as_mut().unwrap().as_mut());
         },
         Some(imsg) => {
             if unsafe { ATTACHED } {
@@ -770,7 +769,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
             );
             unsafe {
                 EXIT_VAL = 1;
-                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+                crate::proc::exit(PROC.as_mut().unwrap().as_mut());
             }
         }
 
@@ -801,7 +800,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
         }
 
         Msg::Exited => unsafe {
-            proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+            crate::proc::exit(PROC.as_mut().unwrap().as_mut());
         },
 
         Msg::ReadOpen => unsafe {
@@ -847,7 +846,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
         Msg::OldStderr | Msg::OldStdin | Msg::OldStdout => {
             eprintln!("server version is too old for client");
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+                crate::proc::exit(PROC.as_mut().unwrap().as_mut());
             }
         }
 
@@ -925,7 +924,7 @@ fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
             }
 
             unsafe {
-                proc_exit(PROC.as_mut().unwrap().as_mut().get_unchecked_mut());
+                crate::proc::exit(PROC.as_mut().unwrap().as_mut());
             }
         }
 
