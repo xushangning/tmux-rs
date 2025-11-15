@@ -62,33 +62,373 @@ impl PartialEq for client_window {
 
 impl Eq for client_window {}
 
-/// Set client key table.
-pub(crate) fn set_key_table(c: &mut Client, mut name: *const c_char) {
-    if name.is_null() {
-        name = get_key_table(c);
+impl Client {
+    /// Set client key table.
+    pub(crate) fn set_key_table(&mut self, mut name: *const c_char) {
+        if name.is_null() {
+            name = self.get_key_table();
+        }
+
+        unsafe {
+            crate::tmux_sys::key_bindings_unref_table(self.keytable);
+            self.keytable = crate::tmux_sys::key_bindings_get_table(name, 1);
+            let keytable = self.keytable.as_mut().unwrap();
+            keytable.references += 1;
+            Errno::result(gettimeofday(&mut keytable.activity_time, ptr::null_mut()))
+                .expect("gettimeofday failed");
+        }
     }
 
-    unsafe {
-        crate::tmux_sys::key_bindings_unref_table(c.keytable);
-        c.keytable = crate::tmux_sys::key_bindings_get_table(name, 1);
-        let keytable = c.keytable.as_mut().unwrap();
-        keytable.references += 1;
-        Errno::result(gettimeofday(&mut keytable.activity_time, ptr::null_mut()))
-            .expect("gettimeofday failed");
+    /// Get default key table.
+    pub(crate) fn get_key_table(&mut self) -> *const c_char {
+        let Some(s) = (unsafe { self.session.as_mut() }) else {
+            return c"root".as_ptr();
+        };
+
+        let name = unsafe { options_get_string(s.options, c"key-table".as_ptr()) };
+        if unsafe { *name } == 0 {
+            c"root".as_ptr()
+        } else {
+            name
+        }
     }
-}
 
-/// Get default key table.
-pub(crate) fn get_key_table(c: &mut Client) -> *const c_char {
-    let Some(s) = (unsafe { c.session.as_mut() }) else {
-        return c"root".as_ptr();
-    };
+    /// Set client title.
+    fn set_title(&mut self) {
+        let template = unsafe {
+            options_get_string(
+                self.session.as_ref().unwrap().options,
+                c"set-titles-string".as_ptr(),
+            )
+        };
 
-    let name = unsafe { options_get_string(s.options, c"key-table".as_ptr()) };
-    if unsafe { *name } == 0 {
-        c"root".as_ptr()
-    } else {
-        name
+        let ft = unsafe {
+            crate::tmux_sys::format_create(
+                self,
+                ptr::null_mut(),
+                crate::tmux_sys::FORMAT_NONE as c_int,
+                0,
+            )
+        };
+        unsafe {
+            crate::tmux_sys::format_defaults(
+                ft,
+                self,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            );
+        }
+
+        let title = unsafe { crate::tmux_sys::format_expand_time(ft, template) };
+        if self.title.is_null() || unsafe { libc::strcmp(title, self.title) != 0 } {
+            unsafe {
+                libc::free(self.title.cast());
+                self.title = xstrdup(title);
+                crate::tmux_sys::tty_set_title(&mut self.tty, self.title);
+            }
+        }
+        unsafe {
+            libc::free(title.cast());
+
+            crate::tmux_sys::format_free(ft);
+        }
+    }
+
+    /// Set client path.
+    fn set_path(&mut self) {
+        let Some(curw) = (unsafe { self.session.as_ref().unwrap().curw.as_ref() }) else {
+            return;
+        };
+        let mut path = unsafe {
+            curw.window
+                .as_ref()
+                .unwrap()
+                .active
+                .as_ref()
+                .unwrap()
+                .base
+                .path
+                .cast_const()
+        };
+        if path.is_null() {
+            path = c"".as_ptr();
+        };
+        if unsafe { self.path.is_null() || libc::strcmp(path, self.path) != 0 } {
+            unsafe {
+                libc::free(self.path.cast());
+                self.path = xstrdup(path);
+                crate::tmux_sys::tty_set_path(&mut self.tty, self.path);
+            }
+        }
+    }
+
+    /// Update cursor position and mode settings. The scroll region and attributes
+    /// are cleared when idle (waiting for an event) as this is the most likely time
+    /// a user may interrupt tmux, for example with ~^Z in ssh(1). This is a
+    /// compromise between excessive resets and likelihood of an interrupt.
+    ///
+    /// tty_region/tty_reset/tty_update_mode already take care of not resetting
+    /// things that are already in their default state.
+    fn reset_state(&mut self) {
+        use crate::tmux_sys::MODE_MOUSE_ALL;
+
+        if self
+            .flags
+            .intersects(ClientFlags::CONTROL | ClientFlags::SUSPENDED)
+        {
+            return;
+        }
+
+        // Disable the block flag.
+        let flags = self.tty.flags & TtyFlags::BLOCK;
+        self.tty.flags.remove(TtyFlags::BLOCK);
+
+        // Get mode from overlay if any, else from screen.
+        let mut cx: c_uint = 0;
+        let mut cy: c_uint = 0;
+        let s = if self.overlay_draw.is_some() {
+            match self.overlay_mode {
+                Some(overlay_mode) => unsafe {
+                    overlay_mode(self, self.overlay_data, &mut cx, &mut cy)
+                },
+                None => ptr::null_mut(),
+            }
+        } else if self.prompt_string.is_null() {
+            self.pane().unwrap().screen
+        } else {
+            self.status.active
+        };
+        let mut mode: c_int = 0;
+        if let Some(s) = unsafe { s.as_ref() } {
+            mode = s.mode;
+        }
+        if unsafe { crate::tmux_sys::log_get_level() } != 0 {
+            let name = unsafe { CStr::from_ptr(self.name).to_str().unwrap() };
+            let mode_str = unsafe {
+                CStr::from_ptr(crate::tmux_sys::screen_mode_to_string(mode))
+                    .to_str()
+                    .unwrap()
+            };
+            debug!("tmux_rs::server::client::reset_state: client {name} mode {mode_str}");
+        }
+
+        // Reset region and margin.
+        unsafe {
+            crate::tmux_sys::tty_region_off(&mut self.tty);
+            crate::tmux_sys::tty_margin_off(&mut self.tty);
+        }
+
+        // Move cursor to pane cursor and offset.
+        let oo = unsafe { self.session.as_ref().unwrap().options };
+        if !self.prompt_string.is_null() {
+            let n = unsafe { options_get_number(oo, c"status-position".as_ptr()) };
+            cy = if n == 0 {
+                0
+            } else {
+                let status_size = unsafe { status_line_size(self) };
+                self.tty.sy - if status_size == 0 { 1 } else { status_size }
+            };
+            cx = self.prompt_cursor as u32;
+        } else if self.overlay_draw.is_none() {
+            let mut cursor = false;
+            let mut ox: c_uint = 0;
+            let mut oy: c_uint = 0;
+            let mut sx: c_uint = 0;
+            let mut sy: c_uint = 0;
+            unsafe {
+                crate::tmux_sys::tty_window_offset(
+                    &mut self.tty,
+                    &mut ox,
+                    &mut oy,
+                    &mut sx,
+                    &mut sy,
+                );
+            }
+            let s = unsafe { s.as_ref().unwrap() };
+            let wp = self.pane().unwrap();
+            if wp.xoff + s.cx >= ox
+                && wp.xoff + s.cx <= ox + sx
+                && wp.yoff + s.cy >= oy
+                && wp.yoff + s.cy <= oy + sy
+            {
+                cursor = true;
+
+                cx = wp.xoff + s.cx - ox;
+                cy = wp.yoff + s.cy - oy;
+
+                if unsafe { status_at_line(self) } == 0 {
+                    cy += unsafe { status_line_size(self) as u32 };
+                }
+            }
+            if !cursor {
+                mode &= !(crate::tmux_sys::MODE_CURSOR as c_int);
+            }
+        }
+        debug!("tmux_rs::server::client::reset_state: cursor to {cx},{cy}");
+        unsafe {
+            crate::tmux_sys::tty_cursor(&mut self.tty, cx, cy);
+        }
+
+        // Set mouse mode if requested. To support dragging, always use button
+        // mode.
+        let w = unsafe {
+            self.session
+                .as_ref()
+                .unwrap()
+                .curw
+                .as_ref()
+                .unwrap()
+                .window
+                .as_ref()
+                .unwrap()
+        };
+        if unsafe { options_get_number(oo, c"mouse".as_ptr()) } != 0 {
+            if self.overlay_draw.is_none() {
+                mode &= !(crate::tmux_sys::ALL_MOUSE_MODES as c_int);
+                if unsafe {
+                    w.panes.assume_init_ref().iter().any(|loop_pane| {
+                        loop_pane.as_ref().screen.as_ref().unwrap().mode & MODE_MOUSE_ALL as i32
+                            != 0
+                    })
+                } {
+                    mode |= MODE_MOUSE_ALL as c_int;
+                }
+            }
+            if mode & (MODE_MOUSE_ALL as c_int) == 0 {
+                mode |= crate::tmux_sys::MODE_MOUSE_BUTTON as c_int;
+            }
+        }
+
+        // Clear bracketed paste mode if at the prompt.
+        if self.overlay_draw.is_none() && !self.prompt_string.is_null() {
+            mode &= !(crate::tmux_sys::MODE_BRACKETPASTE as c_int);
+        }
+
+        unsafe {
+            // Set the terminal mode and reset attributes.
+            tty_update_mode(&mut self.tty, mode, s);
+            crate::tmux_sys::tty_reset(&mut self.tty);
+
+            // All writing must be done, send a sync end (if it was started).
+            crate::tmux_sys::tty_sync_end(&mut self.tty);
+            self.tty.flags |= flags;
+        }
+    }
+
+    /// Clear overlay mode on client.
+    pub(crate) fn clear_overlay(&mut self) {
+        if self.overlay_draw.is_none() {
+            return;
+        }
+
+        unsafe {
+            if event_initialized(&self.overlay_timer) != 0 {
+                event_del(&mut self.overlay_timer);
+            }
+        }
+
+        if let Some(overlay_free) = self.overlay_free {
+            unsafe {
+                overlay_free(self, self.overlay_data);
+            }
+        }
+
+        self.overlay_check = None;
+        self.overlay_mode = None;
+        self.overlay_draw = None;
+        self.overlay_key = None;
+        self.overlay_free = None;
+        self.overlay_resize = None;
+        self.overlay_data = ptr::null_mut();
+
+        self.tty
+            .flags
+            .remove(TtyFlags::FREEZE | TtyFlags::NO_CURSOR);
+        unsafe {
+            if let Some(s) = self.session.as_mut() {
+                window_update_focus(s.curw.as_mut().unwrap().window);
+            }
+            server_redraw_client(self);
+        }
+    }
+
+    /// Set client session.
+    pub(crate) fn set_session(&mut self, s: *mut crate::tmux_sys::session) {
+        let old = self.session;
+
+        if s.is_null() || self.session != s {
+            self.last_session = s;
+        }
+        self.session = s;
+        self.flags |= ClientFlags::FOCUSED;
+
+        unsafe {
+            if let Some(old) = old.as_mut()
+                && let Some(curw) = old.curw.as_mut()
+            {
+                window_update_focus(curw.window);
+            }
+            if let Some(s) = s.as_mut() {
+                recalculate_sizes();
+                window_update_focus(s.curw.as_mut().unwrap().window);
+                session_update_activity(s, ptr::null_mut());
+                crate::tmux_sys::session_theme_changed(s);
+                gettimeofday(&mut s.last_attached_time, ptr::null_mut());
+                {
+                    let curw = s.curw.as_mut().unwrap_unchecked();
+                    curw.flags &= !crate::tmux_sys::WINLINK_ALERTFLAGS as i32;
+                    curw.window.as_mut().unwrap().latest = (&raw mut *self).cast();
+                }
+                crate::tmux_sys::alerts_check_session(s);
+                crate::tmux_sys::tty_update_client_offset(self);
+                crate::tmux_sys::status_timer_start(self);
+                crate::tmux_sys::notify_client(c"client-session-changed".as_ptr(), self);
+                server_redraw_client(self);
+            }
+
+            crate::tmux_sys::server_check_unattached();
+        }
+        super::update_socket();
+    }
+
+    /// Get client window.
+    pub(crate) fn get_client_window(&mut self, id: c_uint) -> Option<&mut client_window> {
+        unsafe {
+            let mut cw = MaybeUninit::<client_window>::uninit();
+            cw.as_mut_ptr()
+                .byte_add(offset_of!(client_window, window))
+                .cast::<c_uint>()
+                .write(id);
+            self.windows
+                .get(cw.assume_init_ref())
+                .map(|mut non_null| non_null.as_mut())
+        }
+    }
+
+    /// Get client active pane.
+    pub(crate) fn pane(&mut self) -> Option<&mut Pane> {
+        let w = unsafe {
+            self.session
+                .as_mut()?
+                .curw
+                .as_mut()
+                .unwrap()
+                .window
+                .as_mut()
+                .unwrap()
+        };
+
+        unsafe {
+            if self.flags.intersects(ClientFlags::ACTIVE_PANE)
+                && let Some(cw) = self.get_client_window(w.id)
+            {
+                cw.pane
+            } else {
+                w.active
+            }
+            .as_mut()
+        }
     }
 }
 
@@ -178,7 +518,7 @@ extern "C" fn repeat_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
     let c = unsafe { (data as *mut Client).as_mut() }.unwrap();
 
     if c.flags.intersects(ClientFlags::REPEAT) {
-        set_key_table(c, ptr::null_mut());
+        c.set_key_table(ptr::null_mut());
         c.flags.remove(ClientFlags::REPEAT);
         unsafe {
             crate::tmux_sys::server_status_client(c);
@@ -724,8 +1064,8 @@ fn check_redraw(c: &mut Client) {
             options_get_number(c.session.as_ref().unwrap().options, c"set-titles".as_ptr())
         } != 0
         {
-            set_title(c);
-            set_path(c);
+            c.set_title();
+            c.set_path();
         }
         unsafe {
             crate::tmux_sys::screen_redraw_screen(c);
@@ -753,208 +1093,6 @@ fn check_redraw(c: &mut Client) {
     }
 }
 
-/// Set client title.
-fn set_title(c: &mut Client) {
-    let template = unsafe {
-        options_get_string(
-            c.session.as_ref().unwrap().options,
-            c"set-titles-string".as_ptr(),
-        )
-    };
-
-    let ft = unsafe {
-        crate::tmux_sys::format_create(c, ptr::null_mut(), crate::tmux_sys::FORMAT_NONE as c_int, 0)
-    };
-    unsafe {
-        crate::tmux_sys::format_defaults(ft, c, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
-    }
-
-    let title = unsafe { crate::tmux_sys::format_expand_time(ft, template) };
-    if c.title.is_null() || unsafe { libc::strcmp(title, c.title) != 0 } {
-        unsafe {
-            libc::free(c.title.cast());
-            c.title = xstrdup(title);
-            crate::tmux_sys::tty_set_title(&mut c.tty, c.title);
-        }
-    }
-    unsafe {
-        libc::free(title.cast());
-
-        crate::tmux_sys::format_free(ft);
-    }
-}
-
-/// Set client path.
-fn set_path(c: &mut Client) {
-    let Some(curw) = (unsafe { c.session.as_ref().unwrap().curw.as_ref() }) else {
-        return;
-    };
-    let mut path = unsafe {
-        curw.window
-            .as_ref()
-            .unwrap()
-            .active
-            .as_ref()
-            .unwrap()
-            .base
-            .path
-            .cast_const()
-    };
-    if path.is_null() {
-        path = c"".as_ptr();
-    };
-    if unsafe { c.path.is_null() || libc::strcmp(path, c.path) != 0 } {
-        unsafe {
-            libc::free(c.path.cast());
-            c.path = xstrdup(path);
-            crate::tmux_sys::tty_set_path(&mut c.tty, c.path);
-        }
-    }
-}
-
-/// Update cursor position and mode settings. The scroll region and attributes
-/// are cleared when idle (waiting for an event) as this is the most likely time
-/// a user may interrupt tmux, for example with ~^Z in ssh(1). This is a
-/// compromise between excessive resets and likelihood of an interrupt.
-///
-/// tty_region/tty_reset/tty_update_mode already take care of not resetting
-/// things that are already in their default state.
-fn reset_state(c: &mut Client) {
-    use crate::tmux_sys::MODE_MOUSE_ALL;
-
-    if c.flags
-        .intersects(ClientFlags::CONTROL | ClientFlags::SUSPENDED)
-    {
-        return;
-    }
-
-    // Disable the block flag.
-    let flags = c.tty.flags & TtyFlags::BLOCK;
-    c.tty.flags.remove(TtyFlags::BLOCK);
-
-    // Get mode from overlay if any, else from screen.
-    let mut cx: c_uint = 0;
-    let mut cy: c_uint = 0;
-    let s = if c.overlay_draw.is_some() {
-        match c.overlay_mode {
-            Some(overlay_mode) => unsafe { overlay_mode(c, c.overlay_data, &mut cx, &mut cy) },
-            None => ptr::null_mut(),
-        }
-    } else if c.prompt_string.is_null() {
-        c.pane().unwrap().screen
-    } else {
-        c.status.active
-    };
-    let mut mode: c_int = 0;
-    if let Some(s) = unsafe { s.as_ref() } {
-        mode = s.mode;
-    }
-    if unsafe { crate::tmux_sys::log_get_level() } != 0 {
-        let name = unsafe { CStr::from_ptr(c.name).to_str().unwrap() };
-        let mode_str = unsafe {
-            CStr::from_ptr(crate::tmux_sys::screen_mode_to_string(mode))
-                .to_str()
-                .unwrap()
-        };
-        debug!("tmux_rs::server::client::reset_state: client {name} mode {mode_str}");
-    }
-
-    // Reset region and margin.
-    unsafe {
-        crate::tmux_sys::tty_region_off(&mut c.tty);
-        crate::tmux_sys::tty_margin_off(&mut c.tty);
-    }
-
-    // Move cursor to pane cursor and offset.
-    let oo = unsafe { c.session.as_ref().unwrap().options };
-    if !c.prompt_string.is_null() {
-        let n = unsafe { options_get_number(oo, c"status-position".as_ptr()) };
-        cy = if n == 0 {
-            0
-        } else {
-            let status_size = unsafe { status_line_size(c) };
-            c.tty.sy - if status_size == 0 { 1 } else { status_size }
-        };
-        cx = c.prompt_cursor as u32;
-    } else if c.overlay_draw.is_none() {
-        let mut cursor = false;
-        let mut ox: c_uint = 0;
-        let mut oy: c_uint = 0;
-        let mut sx: c_uint = 0;
-        let mut sy: c_uint = 0;
-        unsafe {
-            crate::tmux_sys::tty_window_offset(&mut c.tty, &mut ox, &mut oy, &mut sx, &mut sy);
-        }
-        let s = unsafe { s.as_ref().unwrap() };
-        let wp = c.pane().unwrap();
-        if wp.xoff + s.cx >= ox
-            && wp.xoff + s.cx <= ox + sx
-            && wp.yoff + s.cy >= oy
-            && wp.yoff + s.cy <= oy + sy
-        {
-            cursor = true;
-
-            cx = wp.xoff + s.cx - ox;
-            cy = wp.yoff + s.cy - oy;
-
-            if unsafe { status_at_line(c) } == 0 {
-                cy += unsafe { status_line_size(c) as u32 };
-            }
-        }
-        if !cursor {
-            mode &= !(crate::tmux_sys::MODE_CURSOR as c_int);
-        }
-    }
-    debug!("tmux_rs::server::client::reset_state: cursor to {cx},{cy}");
-    unsafe {
-        crate::tmux_sys::tty_cursor(&mut c.tty, cx, cy);
-    }
-
-    // Set mouse mode if requested. To support dragging, always use button
-    // mode.
-    let w = unsafe {
-        c.session
-            .as_ref()
-            .unwrap()
-            .curw
-            .as_ref()
-            .unwrap()
-            .window
-            .as_ref()
-            .unwrap()
-    };
-    if unsafe { options_get_number(oo, c"mouse".as_ptr()) } != 0 {
-        if c.overlay_draw.is_none() {
-            mode &= !(crate::tmux_sys::ALL_MOUSE_MODES as c_int);
-            if unsafe {
-                w.panes.assume_init_ref().iter().any(|loop_pane| {
-                    loop_pane.as_ref().screen.as_ref().unwrap().mode & MODE_MOUSE_ALL as i32 != 0
-                })
-            } {
-                mode |= MODE_MOUSE_ALL as c_int;
-            }
-        }
-        if mode & (MODE_MOUSE_ALL as c_int) == 0 {
-            mode |= crate::tmux_sys::MODE_MOUSE_BUTTON as c_int;
-        }
-    }
-
-    // Clear bracketed paste mode if at the prompt.
-    if c.overlay_draw.is_none() && !c.prompt_string.is_null() {
-        mode &= !(crate::tmux_sys::MODE_BRACKETPASTE as c_int);
-    }
-
-    unsafe {
-        // Set the terminal mode and reset attributes.
-        tty_update_mode(&mut c.tty, mode, s);
-        crate::tmux_sys::tty_reset(&mut c.tty);
-
-        // All writing must be done, send a sync end (if it was started).
-        crate::tmux_sys::tty_sync_end(&mut c.tty);
-        c.tty.flags |= flags;
-    }
-}
-
 /// Client functions that need to happen every loop.
 pub(super) fn loop_() {
     unsafe {
@@ -970,7 +1108,7 @@ pub(super) fn loop_() {
             if !c.session.is_null() {
                 check_modes(c);
                 check_redraw(c);
-                reset_state(c);
+                c.reset_state();
             }
         }
 
@@ -1442,121 +1580,4 @@ fn dispatch_shell(c: &mut Client) {
             .send(Msg::Shell, None, CStr::from_ptr(shell).to_bytes_with_nul());
     }
     crate::proc::kill_peer(unsafe { &mut *c.peer });
-}
-
-impl Client {
-    /// Clear overlay mode on client.
-    pub(crate) fn clear_overlay(&mut self) {
-        if self.overlay_draw.is_none() {
-            return;
-        }
-
-        unsafe {
-            if event_initialized(&self.overlay_timer) != 0 {
-                event_del(&mut self.overlay_timer);
-            }
-        }
-
-        if let Some(overlay_free) = self.overlay_free {
-            unsafe {
-                overlay_free(self, self.overlay_data);
-            }
-        }
-
-        self.overlay_check = None;
-        self.overlay_mode = None;
-        self.overlay_draw = None;
-        self.overlay_key = None;
-        self.overlay_free = None;
-        self.overlay_resize = None;
-        self.overlay_data = ptr::null_mut();
-
-        self.tty
-            .flags
-            .remove(TtyFlags::FREEZE | TtyFlags::NO_CURSOR);
-        unsafe {
-            if let Some(s) = self.session.as_mut() {
-                window_update_focus(s.curw.as_mut().unwrap().window);
-            }
-            server_redraw_client(self);
-        }
-    }
-
-    /// Set client session.
-    pub(crate) fn set_session(&mut self, s: *mut crate::tmux_sys::session) {
-        let old = self.session;
-
-        if s.is_null() || self.session != s {
-            self.last_session = s;
-        }
-        self.session = s;
-        self.flags |= ClientFlags::FOCUSED;
-
-        unsafe {
-            if let Some(old) = old.as_mut()
-                && let Some(curw) = old.curw.as_mut()
-            {
-                window_update_focus(curw.window);
-            }
-            if let Some(s) = s.as_mut() {
-                recalculate_sizes();
-                window_update_focus(s.curw.as_mut().unwrap().window);
-                session_update_activity(s, ptr::null_mut());
-                crate::tmux_sys::session_theme_changed(s);
-                gettimeofday(&mut s.last_attached_time, ptr::null_mut());
-                {
-                    let curw = s.curw.as_mut().unwrap_unchecked();
-                    curw.flags &= !crate::tmux_sys::WINLINK_ALERTFLAGS as i32;
-                    curw.window.as_mut().unwrap().latest = (&raw mut *self).cast();
-                }
-                crate::tmux_sys::alerts_check_session(s);
-                crate::tmux_sys::tty_update_client_offset(self);
-                crate::tmux_sys::status_timer_start(self);
-                crate::tmux_sys::notify_client(c"client-session-changed".as_ptr(), self);
-                server_redraw_client(self);
-            }
-
-            crate::tmux_sys::server_check_unattached();
-        }
-        super::update_socket();
-    }
-
-    /// Get client window.
-    pub(crate) fn get_client_window(&mut self, id: c_uint) -> Option<&mut client_window> {
-        unsafe {
-            let mut cw = MaybeUninit::<client_window>::uninit();
-            cw.as_mut_ptr()
-                .byte_add(offset_of!(client_window, window))
-                .cast::<c_uint>()
-                .write(id);
-            self.windows
-                .get(cw.assume_init_ref())
-                .map(|mut non_null| non_null.as_mut())
-        }
-    }
-
-    /// Get client active pane.
-    pub(crate) fn pane(&mut self) -> Option<&mut Pane> {
-        let w = unsafe {
-            self.session
-                .as_mut()?
-                .curw
-                .as_mut()
-                .unwrap()
-                .window
-                .as_mut()
-                .unwrap()
-        };
-
-        unsafe {
-            if self.flags.intersects(ClientFlags::ACTIVE_PANE)
-                && let Some(cw) = self.get_client_window(w.id)
-            {
-                cw.pane
-            } else {
-                w.active
-            }
-            .as_mut()
-        }
-    }
 }
