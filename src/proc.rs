@@ -11,7 +11,7 @@ use std::{
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::Path,
-    process, u32,
+    process,
 };
 
 use bitflags::bitflags;
@@ -31,9 +31,8 @@ use crate::{
     },
     protocol::Msg,
     tmux_sys::{
-        EV_READ, EV_WRITE, PROTOCOL_VERSION, event_add, event_del, event_get_method,
-        event_get_version, event_set, imsg, imsg_free, imsg_get, imsgbuf_queuelen, imsgbuf_read,
-        imsgbuf_write, xstrdup,
+        EV_READ, EV_WRITE, event_add, event_del, event_get_method, event_get_version, event_set,
+        imsg_free, imsg_get, imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, xstrdup,
     },
 };
 
@@ -136,7 +135,7 @@ impl Proc {
     pub(crate) fn add_peer(
         mut self: Pin<&mut Proc>,
         fd: RawFd,
-        dispatchcb: Option<unsafe extern "C" fn(arg1: *mut IMsg, arg2: *mut c_void)>,
+        dispatchcb: Option<unsafe extern "C" fn(*mut IMsg, *mut c_void)>,
         arg: *mut c_void,
     ) -> NonNull<Peer> {
         let mut peer = unsafe {
@@ -190,7 +189,7 @@ pub struct Peer {
     uid: uid_t,
 
     flags: PeerFlags,
-    dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
+    dispatchcb: Option<unsafe extern "C" fn(*mut IMsg, *mut c_void)>,
     arg: *mut c_void,
 
     entry: MaybeUninit<tailq::Entry<Self>>,
@@ -201,7 +200,7 @@ impl Peer {
         out: NonNull<Self>,
         parent: NonNull<Proc>,
         fd: RawFd,
-        dispatchcb: Option<unsafe extern "C" fn(*mut imsg, *mut c_void)>,
+        dispatchcb: Option<unsafe extern "C" fn(*mut IMsg, *mut c_void)>,
         arg: *mut c_void,
     ) {
         let ptr = out.as_ptr();
@@ -280,7 +279,7 @@ impl Peer {
 }
 
 extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
-    let peer = unsafe { &mut *(arg as *mut Peer) };
+    let peer = unsafe { arg.cast::<Peer>().as_mut().unwrap() };
 
     unsafe {
         if !peer.flags.intersects(PeerFlags::BAD) && (events & EV_READ as i16) != 0 {
@@ -334,10 +333,12 @@ extern "C" fn signal_cb(signo: c_int, _events: c_short, arg: *mut c_void) {
     unsafe { (*tp).signal_cb.unwrap()(signo) };
 }
 
-fn peer_check_version(peer: &mut Peer, imsg: &imsg) -> bool {
+fn peer_check_version(peer: &mut Peer, imsg: &IMsg) -> bool {
     let version = imsg.hdr.peerid & 0xff;
-    if imsg.hdr.type_ != unsafe { mem::transmute(Msg::Version) } && version != PROTOCOL_VERSION {
-        debug!("peer {:p} bad version {}", peer, version);
+    if imsg.hdr.type_ != unsafe { mem::transmute(Msg::Version) }
+        && version != crate::protocol::VERSION
+    {
+        debug!("peer {peer:p} bad version {version}");
 
         peer.send(Msg::Version, None, &[]);
         peer.flags |= PeerFlags::BAD;

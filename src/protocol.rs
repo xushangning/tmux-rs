@@ -3,7 +3,7 @@ use core::ffi::c_int;
 use bytemuck::NoUninit;
 
 /// Protocol version.
-pub(crate) const VERSION: i32 = 8;
+pub(crate) const VERSION: u32 = 8;
 
 /// Message types.
 #[repr(C)]
