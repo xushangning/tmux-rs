@@ -39,7 +39,9 @@ use nix::{
 use thiserror::Error;
 
 use crate::{
-    ClientFlags, pledge,
+    ClientFlags,
+    compat::imsg::IMsg,
+    pledge,
     proc::Proc,
     protocol::{Msg, MsgCommand},
     tmux::{setblocking, shell_argv0},
@@ -74,7 +76,6 @@ enum Exit {
 
 static mut PROC: Option<Pin<MBox<Proc>>> = None;
 static mut PEER: *mut tmuxpeer = ptr::null_mut();
-static FLAGS: Mutex<ClientFlags> = Mutex::new(ClientFlags::empty());
 static mut SUSPENDED: bool = false;
 static EXIT_REASON: Mutex<Option<Exit>> = Mutex::new(None);
 static mut EXIT_FLAG: bool = false;
@@ -86,6 +87,10 @@ static mut ATTACHED: bool = false;
 static mut FILES: client_files = client_files {
     rbh_root: ptr::null_mut(),
 };
+
+struct Context {
+    flags: ClientFlags,
+}
 
 #[derive(Debug)]
 enum GetLockError {
@@ -243,15 +248,16 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
         PROC.as_mut().unwrap().as_mut().set_signals(signal);
     }
 
+    let ctx = Box::new(Context { flags });
+
     // Save the flags.
-    *FLAGS.lock().unwrap() = flags;
     debug!("flags are {:#x}", flags.bits());
 
     // Initialize the client socket and start the server.
     // TODO: #ifdef HAVE_SYSTEMD
     let socket_path =
         OsStr::from_bytes(unsafe { CStr::from_ptr(crate::tmux_sys::socket_path) }.to_bytes());
-    let fd = match connect(base, socket_path.as_ref(), *FLAGS.lock().unwrap()) {
+    let fd = match connect(base, socket_path.as_ref(), ctx.flags) {
         Ok(stream) => stream,
         Err(err) => {
             match err.kind() {
@@ -264,12 +270,15 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
             return 1;
         }
     };
+
+    let ctx_ptr = Box::into_raw(ctx);
+    let ctx = unsafe { ctx_ptr.as_mut().unwrap() };
     unsafe {
         PEER = PROC
             .as_mut()
             .unwrap()
             .as_mut()
-            .add_peer(fd.into(), Some(dispatch), ptr::null_mut())
+            .add_peer(fd.into(), Some(dispatch), ctx_ptr.cast())
             .as_ptr()
     };
 
@@ -330,11 +339,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
 
     // Set up control mode.
     let mut saved_tio = None;
-    if FLAGS
-        .lock()
-        .unwrap()
-        .intersects(ClientFlags::CONTROL_CONTROL)
-    {
+    if ctx.flags.intersects(ClientFlags::CONTROL_CONTROL) {
         saved_tio = match tcgetattr(io::stdin()) {
             Ok(tio) => Some(tio),
             Err(err) => {
@@ -361,6 +366,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
 
     // Send identify messages.
     send_identify(
+        &ctx,
         ttynam.as_os_str().as_bytes(),
         termnam.as_bytes(),
         caps,
@@ -419,14 +425,11 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
 
     // Run command if user requested exec, instead of exiting.
     if matches!(unsafe { EXIT_TYPE.assume_init_ref() }, Msg::Exec) {
-        if FLAGS
-            .lock()
-            .unwrap()
-            .intersects(ClientFlags::CONTROL_CONTROL)
-        {
+        if ctx.flags.intersects(ClientFlags::CONTROL_CONTROL) {
             tcsetattr(io::stdout(), SetArg::TCSAFLUSH, saved_tio.as_ref().unwrap()).ok();
         }
         exec(
+            ctx,
             EXEC_SHELL.lock().unwrap().as_ref().unwrap().as_ref(),
             &EXEC_CMD.lock().unwrap().as_ref().unwrap(),
         );
@@ -446,26 +449,18 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
         if matches!(unsafe { EXIT_TYPE.assume_init_ref() }, Msg::DetachKill) && ppid.as_raw() > 1 {
             kill(ppid, Signal::SIGHUP).ok();
         }
-    } else if FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
+    } else if ctx.flags.intersects(ClientFlags::CONTROL) {
         match EXIT_REASON.lock().unwrap().as_ref() {
             None => println!("%exit"),
             Some(reason) => println!("%exit {reason}"),
         }
         io::stdout().flush().ok();
-        if FLAGS
-            .lock()
-            .unwrap()
-            .intersects(ClientFlags::CONTROL_WAIT_EXIT)
-        {
+        if ctx.flags.intersects(ClientFlags::CONTROL_WAIT_EXIT) {
             // TODO: i thought the stdin is already line buffered. why is setvbuf required?
             // setvbuf(stdin, NULL, _IOLBF, 0);
             io::stdin().lines().for_each(|_line| {});
         }
-        if FLAGS
-            .lock()
-            .unwrap()
-            .intersects(ClientFlags::CONTROL_CONTROL)
-        {
+        if ctx.flags.intersects(ClientFlags::CONTROL_CONTROL) {
             print!("\x1b\\");
             io::stdout().flush().ok();
             tcsetattr(io::stdout(), SetArg::TCSAFLUSH, saved_tio.as_ref().unwrap()).ok();
@@ -479,6 +474,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
 
 /// Send identify messages to server.
 fn send_identify(
+    ctx: &Context,
     ttynam: &[u8],
     termname: &[u8],
     mut caps: *mut *mut c_char,
@@ -486,12 +482,10 @@ fn send_identify(
     cwd: &[u8],
     feat: c_int,
 ) {
-    let flags = *FLAGS.lock().unwrap();
-
     unsafe {
-        (*PEER).send(Msg::IdentifyLongFlags, None, bytemuck::bytes_of(&flags));
+        (*PEER).send(Msg::IdentifyLongFlags, None, bytemuck::bytes_of(&ctx.flags));
         // for compatibility, we send the flags again.
-        (*PEER).send(Msg::IdentifyLongFlags, None, bytemuck::bytes_of(&flags));
+        (*PEER).send(Msg::IdentifyLongFlags, None, bytemuck::bytes_of(&ctx.flags));
 
         (*PEER).send(
             Msg::IdentifyTerm,
@@ -555,7 +549,7 @@ fn send_identify(
 }
 
 /// Run command in shell; used for -c.
-fn exec(shell: &Path, shell_cmd: &OsStr) -> ! {
+fn exec(ctx: &Context, shell: &Path, shell_cmd: &OsStr) -> ! {
     debug!("shell {}, command {}", shell.display(), shell_cmd.display());
 
     unsafe {
@@ -572,10 +566,7 @@ fn exec(shell: &Path, shell_cmd: &OsStr) -> ! {
     Err::<(), _>(
         Command::new(shell)
             .env("SHELL", shell)
-            .arg0(shell_argv0(
-                shell,
-                FLAGS.lock().unwrap().intersects(ClientFlags::LOGIN),
-            ))
+            .arg0(shell_argv0(shell, ctx.flags.intersects(ClientFlags::LOGIN)))
             .arg("-c")
             .arg(shell_cmd)
             .exec(),
@@ -650,7 +641,9 @@ extern "C" fn file_check_cb(
 }
 
 /// Callback for client read events.
-extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, _arg: *mut c_void) {
+extern "C" fn dispatch(imsg: *mut IMsg, arg: *mut c_void) {
+    let ctx = unsafe { arg.cast::<Context>().as_mut().unwrap() };
+
     match unsafe { imsg.as_mut() } {
         None => unsafe {
             if !EXIT_FLAG {
@@ -661,9 +654,9 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, _arg: *mut c_void) {
         },
         Some(imsg) => {
             if unsafe { ATTACHED } {
-                dispatch_attached(imsg);
+                dispatch_attached(ctx, imsg);
             } else {
-                dispatch_wait(imsg);
+                dispatch_wait(ctx, imsg);
             }
         }
     }
@@ -691,7 +684,7 @@ fn dispatch_exit_message(data: *mut c_char, data_len: usize) {
 }
 
 /// Dispatch imsgs when in wait state (before MSG_READY).
-fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
+fn dispatch_wait(ctx: &mut Context, imsg: &mut IMsg) {
     static mut PLEDGE_APPLIED: bool = false;
 
     // "sendfd" is no longer required once all of the identify messages
@@ -750,11 +743,11 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
         }
 
         Msg::Flags => {
-            *FLAGS.lock().unwrap() = bytemuck::try_pod_read_unaligned(unsafe {
+            ctx.flags = bytemuck::try_pod_read_unaligned(unsafe {
                 slice::from_raw_parts(data as *const u8, data_len)
             })
             .expect("bad MSG_FLAGS string");
-            debug!("new flags are {:x}", *FLAGS.lock().unwrap());
+            debug!("new flags are {:x}", ctx.flags);
         }
 
         Msg::Shell => {
@@ -764,6 +757,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
             }
 
             exec(
+                ctx,
                 OsStr::from_bytes(data).as_ref(),
                 OsStr::from_bytes(
                     unsafe { CStr::from_ptr(crate::tmux_sys::shell_command) }.to_bytes(),
@@ -785,7 +779,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
                 PEER,
                 imsg,
                 1,
-                match !FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
+                match !ctx.flags.intersects(ClientFlags::CONTROL) {
                     true => 1,
                     false => 0,
                 },
@@ -804,7 +798,7 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
                 PEER,
                 imsg,
                 1,
-                match !FLAGS.lock().unwrap().intersects(ClientFlags::CONTROL) {
+                match !ctx.flags.intersects(ClientFlags::CONTROL) {
                     true => 1,
                     false => 0,
                 },
@@ -831,18 +825,18 @@ fn dispatch_wait(imsg: &mut crate::tmux_sys::imsg) {
 }
 
 /// Dispatch imsgs in attached state (after MSG_READY).
-fn dispatch_attached(imsg: &crate::tmux_sys::imsg) {
+fn dispatch_attached(ctx: &mut Context, imsg: &crate::tmux_sys::imsg) {
     let data = imsg.data as *mut c_char;
     let data_len = imsg.hdr.len as usize - size_of::<imsg_hdr>();
 
     let msg_type: Msg = unsafe { mem::transmute(imsg.hdr.type_) };
     match msg_type {
         Msg::Flags => {
-            *FLAGS.lock().unwrap() = bytemuck::try_pod_read_unaligned(unsafe {
+            ctx.flags = bytemuck::try_pod_read_unaligned(unsafe {
                 slice::from_raw_parts(data as *const u8, data_len)
             })
             .expect("bad MSG_FLAGS string");
-            debug!("new flags are {:x}", *FLAGS.lock().unwrap());
+            debug!("new flags are {:x}", ctx.flags);
         }
 
         Msg::Detach | Msg::DetachKill => {
