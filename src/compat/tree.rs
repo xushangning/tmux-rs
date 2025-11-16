@@ -21,6 +21,12 @@ pub mod rb {
                 current: self.root.map(|root| Entry::front::<OFFSET>(root)),
             }
         }
+
+        pub fn drain(&mut self) -> Drain<T, OFFSET> {
+            Drain {
+                current: self.root.take(),
+            }
+        }
     }
 
     impl<T, const OFFSET: usize> Default for Head<T, OFFSET> {
@@ -71,6 +77,38 @@ pub mod rb {
         /// Finds the node with the same key as elm
         pub unsafe fn find(&self, elm: &T) -> Option<NonNull<T>> {
             unsafe { self.get(elm) }
+        }
+    }
+
+    pub struct Drain<T, const OFFSET: usize> {
+        current: Option<NonNull<T>>,
+    }
+
+    impl<T, const OFFSET: usize> Iterator for Drain<T, OFFSET> {
+        type Item = NonNull<T>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.current.inspect(|&current| {
+                self.current = Entry::successor::<OFFSET>(current);
+
+                // Let the current node (i.e., the node to be returned and removed from the tree)'s right
+                // subtree takes the place of the current node. The current node won't have a left subtree,
+                // because otherwise the left child would be a predecessor that should have been removed
+                // from the tree before the current node.
+                let current_entry = unsafe { Entry::new::<OFFSET>(current).as_ref() };
+                // Set the parent's left child.
+                if let Some(parent) = NonNull::new(current_entry.parent) {
+                    let parent_entry = unsafe { Entry::new::<OFFSET>(parent).as_mut() };
+                    // The current node must be the left child of its parent, because otherwise the parent
+                    // node would be a predecessor of the current node.
+                    parent_entry.left = current_entry.right;
+                }
+                // Set the current node's right child to the new parent.
+                if let Some(child) = NonNull::new(current_entry.right) {
+                    let child_entry = unsafe { Entry::new::<OFFSET>(child).as_mut() };
+                    child_entry.parent = current_entry.parent;
+                }
+            })
         }
     }
 

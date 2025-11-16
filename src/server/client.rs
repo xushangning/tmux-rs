@@ -31,11 +31,11 @@ use crate::{
         event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
         global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
         notify_client, options_get_command, options_get_number, options_get_string,
-        recalculate_size, recalculate_sizes, server_client_handle_key, server_client_lost,
-        server_redraw_client, session_update_activity, start_cfg, status_at_line, status_init,
-        status_line_size, tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize,
-        tty_send_requests, tty_start_tty, tty_update_mode, window_update_focus, xasprintf, xcalloc,
-        xreallocarray, xstrdup,
+        recalculate_size, recalculate_sizes, server_client_handle_key, server_redraw_client,
+        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
+        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
+        tty_start_tty, tty_update_mode, window_update_focus, xasprintf, xcalloc, xreallocarray,
+        xstrdup,
     },
     tty::TtyFlags,
     util,
@@ -486,6 +486,130 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     }
     debug!("new client {:?}", c_ptr);
     unsafe { NonNull::new_unchecked(c_ptr) }
+}
+
+/// Lost an attached client.
+fn attached_lost(c: &mut Client) {
+    use nix::sys::time::TimeVal;
+
+    debug!("lost attached client {c:p}");
+
+    // By this point the session in the client has been cleared so walk all
+    // windows to find any with this client as the latest.
+    for mut w in unsafe { &crate::tmux_sys::windows } {
+        if unsafe { w.as_mut().latest } == (&raw mut *c).cast() {
+            continue;
+        }
+
+        if let Some(mut found) = unsafe { crate::tmux_sys::clients.assume_init_ref() }
+            .iter()
+            .filter(|&loop_| {
+                if loop_ == NonNull::from_mut(c) {
+                    return false;
+                }
+                if let Some(mut s) = NonNull::new(unsafe { loop_.as_ref().session }) {
+                    unsafe { s.as_mut().curw.as_ref().unwrap().window == w.as_ptr() }
+                } else {
+                    false
+                }
+            })
+            .min_by_key(|loop_| TimeVal::from(unsafe { loop_.as_ref().activity_time }))
+        {
+            update_latest(unsafe { found.as_mut() });
+        }
+    }
+}
+
+/// Lost a client.
+pub(crate) fn lost(c: &mut Client) {
+    use crate::tmux_sys::event_del;
+
+    c.flags |= ClientFlags::DEAD;
+
+    c.clear_overlay();
+    unsafe {
+        crate::tmux_sys::status_prompt_clear(c);
+        crate::tmux_sys::status_message_clear(c);
+    }
+
+    unsafe {
+        for mut cf in mem::transmute::<_, &ClientFiles>(&c.files) {
+            cf.as_mut().error = libc::EINTR;
+            crate::tmux_sys::file_fire_done(cf.as_ptr());
+        }
+    }
+
+    for cw in c.windows.drain() {
+        unsafe {
+            libc::free(cw.as_ptr().cast());
+        }
+    }
+
+    unsafe {
+        Pin::new_unchecked(crate::tmux_sys::clients.assume_init_mut()).remove(NonNull::from_mut(c));
+    }
+    debug!("lost client {c:p}");
+
+    if c.flags.intersects(ClientFlags::ATTACHED) {
+        attached_lost(c);
+        unsafe {
+            notify_client(c"client-detached".as_ptr(), c);
+        }
+    }
+
+    unsafe {
+        if c.flags.intersects(ClientFlags::CONTROL) {
+            crate::tmux_sys::control_stop(c);
+        }
+        if c.flags.intersects(ClientFlags::TERMINAL) {
+            crate::tmux_sys::tty_free(&mut c.tty);
+        }
+        libc::free(c.ttyname.cast());
+        libc::free(c.clipboard_panes.cast());
+
+        libc::free(c.term_name.cast());
+        libc::free(c.term_type.cast());
+        crate::tmux_sys::tty_term_free_list(c.term_caps, c.term_ncaps);
+
+        crate::tmux_sys::status_free(c);
+
+        libc::free(c.title.cast());
+        libc::free(c.cwd.cast_mut().cast());
+
+        event_del(&mut c.repeat_timer);
+        event_del(&mut c.click_timer);
+
+        crate::tmux_sys::key_bindings_unref_table(c.keytable);
+
+        libc::free(c.message_string.cast());
+        if event_initialized(&mut c.message_timer) != 0 {
+            event_del(&mut c.message_timer);
+        }
+
+        libc::free(c.prompt_saved.cast());
+        libc::free(c.prompt_string.cast());
+        libc::free(c.prompt_buffer.cast());
+
+        crate::tmux_sys::format_lost_client(c);
+        crate::tmux_sys::environ_free(c.environ);
+
+        crate::tmux_sys::proc_remove_peer(c.peer);
+        c.peer = ptr::null_mut();
+
+        if c.out_fd != -1 {
+            libc::close(c.out_fd);
+        }
+        if c.fd != -1 {
+            libc::close(c.fd);
+        }
+        crate::tmux_sys::server_client_unref(c);
+
+        super::add_accept(0); // may be more file descriptors now
+
+        crate::tmux_sys::recalculate_sizes();
+        crate::tmux_sys::server_check_unattached();
+    }
+    super::update_socket();
 }
 
 /// Has the latest client changed?
@@ -1147,14 +1271,9 @@ extern "C" fn dispatch(imsg: *mut crate::tmux_sys::imsg, arg: *mut c_void) {
         return;
     }
 
-    let imsg = match unsafe { imsg.as_mut() } {
-        Some(imsg) => imsg,
-        None => {
-            unsafe {
-                server_client_lost(c);
-            }
-            return;
-        }
+    let Some(imsg) = (unsafe { imsg.as_mut() }) else {
+        lost(c);
+        return;
     };
 
     let data_len = imsg.hdr.len as usize - HEADER_SIZE;

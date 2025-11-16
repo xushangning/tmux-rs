@@ -52,8 +52,8 @@ use crate::{
         event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
         options_get_number, options_set_number, server_acl_init, server_acl_join,
-        server_client_lost, server_destroy_pane, session_destroy, status_prompt_save_history,
-        tty_create_log, utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
+        server_destroy_pane, session_destroy, status_prompt_save_history, tty_create_log,
+        utf8_update_width_cache, window_pane_destroy_ready, xstrdup,
     },
     window::PaneFlags,
 };
@@ -320,9 +320,7 @@ fn send_exit() {
     for mut c_ptr in unsafe { crate::tmux_sys::clients.assume_init_ref() } {
         let c = unsafe { c_ptr.as_mut() };
         if c.flags.intersects(ClientFlags::SUSPENDED) {
-            unsafe {
-                server_client_lost(c_ptr.as_mut());
-            }
+            client::lost(unsafe { c_ptr.as_mut() });
         } else {
             c.flags |= ClientFlags::EXIT;
             c.exit_type = ClientExitType::Shutdown;
