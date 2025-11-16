@@ -12,7 +12,7 @@ use std::{
     io::{self, ErrorKind, IsTerminal, Write},
     mem::MaybeUninit,
     os::{
-        fd::{AsRawFd, IntoRawFd},
+        fd::AsRawFd,
         unix::{ffi::OsStrExt, fs::OpenOptionsExt, net::UnixStream, process::CommandExt},
     },
     path::{Path, PathBuf},
@@ -269,7 +269,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
             .as_mut()
             .unwrap()
             .as_mut()
-            .add_peer(fd.into_raw_fd(), Some(dispatch), ptr::null_mut())
+            .add_peer(fd.into(), Some(dispatch), ptr::null_mut())
             .as_ptr()
     };
 

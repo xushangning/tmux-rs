@@ -6,7 +6,7 @@ use core::{
     pin::Pin,
     ptr::{self, NonNull},
 };
-use std::os::{fd::IntoRawFd, unix::net::UnixStream};
+use std::os::unix::net::UnixStream;
 
 use libc::{gettimeofday, pid_t, timeval};
 use log::debug;
@@ -442,7 +442,7 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     let c_ptr = &raw mut *c.as_mut();
     c.references = 1;
     c.peer = unsafe { crate::tmux_sys::server_proc.as_mut().unwrap().as_mut() }
-        .add_peer(sock.into_raw_fd(), Some(dispatch), c_ptr.cast())
+        .add_peer(sock.into(), Some(dispatch), c_ptr.cast())
         .as_ptr();
 
     Errno::result(unsafe { gettimeofday(&mut c.creation_time, ptr::null_mut()) })
@@ -593,7 +593,7 @@ pub(crate) fn lost(c: &mut Client) {
         crate::tmux_sys::format_lost_client(c);
         crate::tmux_sys::environ_free(c.environ);
 
-        crate::tmux_sys::proc_remove_peer(c.peer);
+        crate::proc::remove_peer(NonNull::new(c.peer).unwrap());
         c.peer = ptr::null_mut();
 
         if c.out_fd != -1 {

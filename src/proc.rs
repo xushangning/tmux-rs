@@ -7,7 +7,7 @@ use core::{
 use std::{
     ffi::{CString, OsStr},
     os::{
-        fd::{OwnedFd, RawFd},
+        fd::{AsRawFd, OwnedFd},
         unix::{ffi::OsStrExt, net::UnixStream},
     },
     path::Path,
@@ -134,7 +134,7 @@ impl Proc {
 
     pub(crate) fn add_peer(
         mut self: Pin<&mut Proc>,
-        fd: RawFd,
+        fd: OwnedFd,
         dispatchcb: Option<unsafe extern "C" fn(*mut IMsg, *mut c_void)>,
         arg: *mut c_void,
     ) -> NonNull<Peer> {
@@ -153,7 +153,11 @@ impl Proc {
         };
 
         let mut peer_nonnull = NonNull::from_mut(unsafe { peer.as_mut().get_unchecked_mut() });
-        debug!("add peer {:?}: {fd} ({arg:?})", peer_nonnull.as_ptr());
+        debug!(
+            "add peer {:?}: {} ({arg:?})",
+            peer_nonnull.as_ptr(),
+            peer.ibuf.fd.as_raw_fd(),
+        );
         unsafe {
             self.project()
                 .peers
@@ -199,7 +203,7 @@ impl Peer {
     fn init(
         out: NonNull<Self>,
         parent: NonNull<Proc>,
-        fd: RawFd,
+        fd: OwnedFd,
         dispatchcb: Option<unsafe extern "C" fn(*mut IMsg, *mut c_void)>,
         arg: *mut c_void,
     ) {
@@ -212,18 +216,19 @@ impl Peer {
             (&raw mut (*ptr).dispatchcb).write(dispatchcb);
             (&raw mut (*ptr).arg).write(arg);
 
+            let raw_fd = fd.as_raw_fd();
             IMsgBuf::init(NonNull::from_mut(&mut (*ptr).ibuf), fd).expect("imsgbuf_init");
             crate::tmux_sys::imsgbuf_allow_fdpass(&mut (*ptr).ibuf);
             event_set(
                 &mut (*ptr).event,
-                fd,
+                raw_fd,
                 EV_READ.try_into().unwrap(),
                 Some(event_cb),
                 ptr.cast(),
             );
 
             let mut gid = MaybeUninit::uninit();
-            if libc::getpeereid(fd, &mut (*ptr).uid, gid.as_mut_ptr()) != 0 {
+            if libc::getpeereid(raw_fd, &mut (*ptr).uid, gid.as_mut_ptr()) != 0 {
                 (&raw mut (*ptr).uid).write(u32::MAX);
             }
         }
@@ -239,7 +244,7 @@ impl Peer {
             }
             event_set(
                 &mut self.event,
-                self.ibuf.fd,
+                self.ibuf.fd.as_raw_fd(),
                 events,
                 Some(event_cb),
                 self as *mut _ as *mut c_void,
@@ -274,6 +279,15 @@ impl Peer {
     pub(crate) fn flush(&mut self) {
         unsafe {
             crate::tmux_sys::imsgbuf_flush(&mut self.ibuf);
+        }
+    }
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        unsafe {
+            event_del(&mut self.event);
+            crate::tmux_sys::imsgbuf_clear(&mut self.ibuf);
         }
     }
 }
@@ -436,6 +450,15 @@ pub(crate) fn fork_and_daemon() -> (ForkResult, UnixStream) {
         }
         ForkResult::Parent { child } => (ForkResult::Parent { child }, parent_sock),
     }
+}
+
+pub(crate) fn remove_peer(mut peer: NonNull<Peer>) {
+    unsafe { Pin::new_unchecked(peer.as_mut().parent.as_mut().unwrap()) }
+        .project()
+        .peers
+        .remove(peer);
+    let peer = MBox::into_pin(unsafe { MBox::from_non_null_raw(peer) });
+    debug!("remove peer {:p}", peer.as_ref());
 }
 
 pub(crate) fn kill_peer(peer: &mut Peer) {

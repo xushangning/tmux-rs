@@ -22,13 +22,13 @@ pub struct Buf {
     w: NonNull<crate::tmux_sys::msgbuf>,
     pid: libc::pid_t,
     maxsize: u32,
-    pub fd: c_int,
+    pub fd: OwnedFd,
     flags: c_int,
     _pin: PhantomPinned,
 }
 
 impl Buf {
-    pub fn init(out: NonNull<Self>, fd: RawFd) -> nix::Result<()> {
+    pub fn init(out: NonNull<Self>, fd: OwnedFd) -> nix::Result<()> {
         let w = NonNull::new(unsafe {
             crate::tmux_sys::msgbuf_new_reader(HEADER_SIZE, Some(parse_hdr), out.as_ptr().cast())
         })
