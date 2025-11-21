@@ -11,6 +11,9 @@ fn main() {
 
     println!("cargo:rustc-link-lib=event_core");
     println!("cargo:rustc-link-lib=tmux");
+    println!("cargo:rustc-link-lib=tinfo");
+    println!("cargo:rustc-link-lib=resolv");
+    println!("cargo:rustc-link-lib=m");
     let bindings = bindgen::Builder::default()
         .header("tmux.h")
         .merge_extern_blocks(true)

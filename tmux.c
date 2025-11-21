@@ -346,9 +346,11 @@ getversion(void)
 	return (TMUX_VERSION);
 }
 
+/* Commented out to avoid duplicate main with Rust binary
 int
 main(int argc, char **argv)
-{
+{*/
+#if 0
 	char					*path = NULL, *label = NULL;
 	char					*cause, **var;
 	const char				*s, *cwd;
@@ -538,3 +540,5 @@ main(int argc, char **argv)
 	/* Pass control to the client. */
 	exit(client_main(osdep_event_init(), argc, argv, flags, feat));
 }
+#endif
+/* End commented out main */
