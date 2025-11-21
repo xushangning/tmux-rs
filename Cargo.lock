@@ -213,6 +213,7 @@ dependencies = [
 [[package]]
 name = "clap"
 version = "4.5.41"
+source = "git+https://github.com/xushangning/clap.git#b9c746672c274cb8ed22145c56313cf83cd9e923"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -221,6 +222,7 @@ dependencies = [
 [[package]]
 name = "clap_builder"
 version = "4.5.41"
+source = "git+https://github.com/xushangning/clap.git#b9c746672c274cb8ed22145c56313cf83cd9e923"
 dependencies = [
  "anstream",
  "anstyle",
@@ -231,6 +233,7 @@ dependencies = [
 [[package]]
 name = "clap_derive"
 version = "4.5.41"
+source = "git+https://github.com/xushangning/clap.git#b9c746672c274cb8ed22145c56313cf83cd9e923"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -241,6 +244,7 @@ dependencies = [
 [[package]]
 name = "clap_lex"
 version = "0.7.5"
+source = "git+https://github.com/xushangning/clap.git#b9c746672c274cb8ed22145c56313cf83cd9e923"
 
 [[package]]
 name = "colorchoice"
