@@ -15,6 +15,7 @@ fn main() {
         .header("tmux.h")
         .blocklist_type("timeval")
         .raw_line("use libc::timeval;")
+        .blocklist_item("IPPORT_RESERVED")
         .blocklist_type("clients")
         .raw_line("type clients = core::mem::MaybeUninit<crate::compat::queue::tailq::Head<client, { core::mem::offset_of!(client, entry) }>>;")
         .blocklist_type("message_list")

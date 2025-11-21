@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use std::env;
 
 use crate::tmux_sys::event_base;
@@ -16,4 +17,9 @@ pub fn event_init() -> *mut event_base {
         env::remove_var("EVENT_NOPOLL");
         base
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn event_init() -> *mut event_base {
+    unsafe { crate::tmux_sys::event_init() }
 }
