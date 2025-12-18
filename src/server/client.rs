@@ -23,6 +23,7 @@ use crate::{
     file::ClientFiles,
     libevent::{EventFlags, evtimer_add, evtimer_set},
     protocol::Msg,
+    screen::ModeFlags,
     tmux_sys::{
         _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
         checkshell, client_file, client_window, clients, cmd_list_all_have, cmd_list_copy,
@@ -170,8 +171,6 @@ impl Client {
     /// tty_region/tty_reset/tty_update_mode already take care of not resetting
     /// things that are already in their default state.
     fn reset_state(&mut self) {
-        use crate::tmux_sys::MODE_MOUSE_ALL;
-
         if self
             .flags
             .intersects(ClientFlags::CONTROL | ClientFlags::SUSPENDED)
@@ -198,14 +197,13 @@ impl Client {
         } else {
             self.status.active
         };
-        let mut mode: c_int = 0;
-        if let Some(s) = unsafe { s.as_ref() } {
-            mode = s.mode;
-        }
+        let mut mode = unsafe { s.as_ref() }
+            .map(|s| ModeFlags::from_bits_retain(s.mode))
+            .unwrap_or_default();
         if unsafe { crate::tmux_sys::log_get_level() } != 0 {
             let name = unsafe { CStr::from_ptr(self.name).to_str().unwrap() };
             let mode_str = unsafe {
-                CStr::from_ptr(crate::tmux_sys::screen_mode_to_string(mode))
+                CStr::from_ptr(crate::tmux_sys::screen_mode_to_string(mode.bits()))
                     .to_str()
                     .unwrap()
             };
@@ -261,7 +259,7 @@ impl Client {
                 }
             }
             if !cursor {
-                mode &= !(crate::tmux_sys::MODE_CURSOR as c_int);
+                mode.remove(ModeFlags::CURSOR);
             }
         }
         debug!("tmux_rs::server::client::reset_state: cursor to {cx},{cy}");
@@ -284,29 +282,31 @@ impl Client {
         };
         if unsafe { options_get_number(oo, c"mouse".as_ptr()) } != 0 {
             if self.overlay_draw.is_none() {
-                mode &= !(crate::tmux_sys::ALL_MOUSE_MODES as c_int);
+                mode.remove(ModeFlags::ALL_MOUSE_MODES);
                 if unsafe {
                     w.panes.assume_init_ref().iter().any(|loop_pane| {
-                        loop_pane.as_ref().screen.as_ref().unwrap().mode & MODE_MOUSE_ALL as i32
-                            != 0
+                        ModeFlags::from_bits_retain(
+                            loop_pane.as_ref().screen.as_ref().unwrap().mode,
+                        )
+                        .intersects(ModeFlags::MOUSE_ALL)
                     })
                 } {
-                    mode |= MODE_MOUSE_ALL as c_int;
+                    mode |= ModeFlags::MOUSE_ALL;
                 }
             }
-            if mode & (MODE_MOUSE_ALL as c_int) == 0 {
-                mode |= crate::tmux_sys::MODE_MOUSE_BUTTON as c_int;
+            if !mode.intersects(ModeFlags::MOUSE_ALL) {
+                mode |= ModeFlags::MOUSE_BUTTON;
             }
         }
 
         // Clear bracketed paste mode if at the prompt.
         if self.overlay_draw.is_none() && !self.prompt_string.is_null() {
-            mode &= !(crate::tmux_sys::MODE_BRACKETPASTE as c_int);
+            mode.remove(ModeFlags::BRACKET_PASTE);
         }
 
         unsafe {
             // Set the terminal mode and reset attributes.
-            tty_update_mode(&mut self.tty, mode, s);
+            tty_update_mode(&mut self.tty, mode.bits(), s);
             crate::tmux_sys::tty_reset(&mut self.tty);
 
             // All writing must be done, send a sync end (if it was started).

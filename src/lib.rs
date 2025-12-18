@@ -10,6 +10,7 @@ pub mod log;
 pub mod osdep;
 mod proc;
 mod protocol;
+pub(crate) mod screen;
 mod server;
 pub mod tmux;
 pub mod tmux_sys;
