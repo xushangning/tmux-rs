@@ -2332,7 +2332,7 @@ server_client_repeat_time(struct client *c, struct key_binding *bd)
  * Handle data key input from client. This owns and can modify the key event it
  * is given and is responsible for freeing it.
  */
-static enum cmd_retval
+enum cmd_retval
 server_client_key_callback(struct cmdq_item *item, void *data)
 {
 	struct client			*c = cmdq_get_client(item);

@@ -31,11 +31,10 @@ use crate::{
         event_initialized, event_pending, file_read_data, file_read_done, file_write_ready,
         global_options, global_s_options, imsg_get_fd, key_bindings_get_table, key_event,
         notify_client, options_get_command, options_get_number, options_get_string,
-        recalculate_size, recalculate_sizes, server_client_handle_key, server_redraw_client,
-        session_update_activity, start_cfg, status_at_line, status_init, status_line_size,
-        tty_close, tty_get_features, tty_init, tty_repeat_requests, tty_resize, tty_send_requests,
-        tty_start_tty, tty_update_mode, window_update_focus, xasprintf, xcalloc, xreallocarray,
-        xstrdup,
+        recalculate_size, recalculate_sizes, server_redraw_client, session_update_activity,
+        start_cfg, status_at_line, status_init, status_line_size, tty_close, tty_get_features,
+        tty_init, tty_repeat_requests, tty_resize, tty_send_requests, tty_start_tty,
+        tty_update_mode, window_update_focus, xasprintf, xcalloc, xreallocarray, xstrdup,
     },
     tty::TtyFlags,
     util,
@@ -663,13 +662,7 @@ extern "C" fn click_timer(_fd: c_int, _events: c_short, data: *mut c_void) {
             unsafe { MBox::from_raw(xcalloc(1, mem::size_of::<key_event>()).cast::<key_event>()) };
         event.key = KEYC_DOUBLECLICK as u64;
         event.m = c.click_event.clone();
-        unsafe {
-            let mut event_nonnull = NonNull::from_mut(&mut event);
-            if server_client_handle_key(c, MBox::into_raw(event)) == 0 {
-                libc::free(event_nonnull.as_mut().buf.cast());
-                libc::free(event_nonnull.as_ptr().cast());
-            }
-        }
+        _ = handle_key(c, event);
     }
     c.flags
         .remove(ClientFlags::DOUBLE_CLICK | ClientFlags::TRIPLE_CLICK);
@@ -1215,6 +1208,56 @@ fn check_redraw(c: &mut Client) {
         c.redraw = unsafe { evbuffer_get_length((*tty).out) };
         debug!("{name}: redraw added {} bytes", c.redraw);
     }
+}
+
+/// Handle a key event.
+fn handle_key(c: &mut Client, mut event: MBox<key_event>) -> Option<MBox<key_event>> {
+    // Check the client is good to accept input.
+    if c.session.is_null() || c.flags.intersects(ClientFlags::UNATTACHED) {
+        return None;
+    }
+
+    // Key presses in overlay mode and the command prompt are a special
+    // case. The queue might be blocked so they need to be processed
+    // immediately rather than queued.
+    if !c.flags.intersects(ClientFlags::READ_ONLY) {
+        if !c.message_string.is_null() {
+            if c.message_ignore_keys != 0 {
+                return Some(event);
+            }
+            unsafe {
+                crate::tmux_sys::status_message_clear(c);
+            }
+        }
+        if let Some(overlay_key) = c.overlay_key {
+            match unsafe { overlay_key(c, c.overlay_data, event.as_mut()) } {
+                0 => return Some(event),
+                1 => {
+                    c.clear_overlay();
+                    return Some(event);
+                }
+                _ => {}
+            }
+        }
+        c.clear_overlay();
+        if !c.prompt_string.is_null() {
+            if unsafe { crate::tmux_sys::status_prompt_key(c, event.key) } == 0 {
+                return Some(event);
+            }
+        }
+    }
+
+    // Add the key to the queue so it happens after any commands queued by
+    // previous keys.
+    unsafe {
+        let item = cmdq_get_callback1(
+            c"server_client_key_callback".as_ptr(),
+            Some(crate::tmux_sys::server_client_key_callback),
+            MBox::into_raw(event).cast(),
+        );
+        cmdq_append(c, item);
+    }
+    None
 }
 
 /// Client functions that need to happen every loop.
