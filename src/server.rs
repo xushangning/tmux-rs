@@ -44,11 +44,11 @@ use nix::{
 use crate::{
     ClientExitType, ClientFlags,
     compat::queue::tailq,
-    libevent::{evtimer_add, evtimer_set},
+    libevent::{EventFlags, evtimer_add, evtimer_set},
     pledge,
     proc::Proc,
     tmux_sys::{
-        EV_READ, WAIT_ANY, cmd_wait_for_flush, cmdq_next, event_add, event_base, event_del,
+        WAIT_ANY, cmd_wait_for_flush, cmdq_next, event_add, event_base, event_del,
         event_initialized, event_reinit, event_set, format_tidy_jobs, input_key_build,
         job_check_died, job_kill_all, job_still_running, key_bindings_init, log_get_level,
         options_get_number, options_set_number, server_acl_init, server_acl_join,
@@ -380,7 +380,7 @@ extern "C" fn accept(fd: RawFd, events: c_short, _data: *mut c_void) {
     use Errno::*;
 
     add_accept(0);
-    if events & EV_READ as i16 == 0 {
+    if !EventFlags::from_bits_retain(events).intersects(EventFlags::READ) {
         return;
     }
 
@@ -426,7 +426,7 @@ fn add_accept(timeout: c_int) {
             event_set(
                 EV_ACCEPT.as_mut_ptr(),
                 listener.as_raw_fd(),
-                EV_READ.try_into().unwrap(),
+                EventFlags::READ.bits(),
                 Some(accept),
                 ptr::null_mut(),
             );

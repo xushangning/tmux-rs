@@ -1,8 +1,19 @@
 use core::ffi::{c_int, c_short, c_void};
 
+use bitflags::{Flags, bitflags};
 use libc::timeval;
 
 use crate::tmux_sys::{event, event_add, event_set};
+
+bitflags! {
+    pub struct EventFlags: c_short {
+        const TIMEOUT = crate::tmux_sys::EV_TIMEOUT as <Self as Flags>::Bits;
+        const READ = crate::tmux_sys::EV_READ as <Self as Flags>::Bits;
+        const WRITE = crate::tmux_sys::EV_WRITE as <Self as Flags>::Bits;
+        const SIGNAL = crate::tmux_sys::EV_SIGNAL as <Self as Flags>::Bits;
+        const PERSIST = crate::tmux_sys::EV_PERSIST as <Self as Flags>::Bits;
+    }
+}
 
 pub(crate) unsafe fn evtimer_set(
     arg1: *mut event,
@@ -26,9 +37,13 @@ pub(crate) unsafe fn signal_set(
     cb: Option<unsafe extern "C" fn(c_int, c_short, *mut c_void)>,
     arg: *mut c_void,
 ) {
-    use crate::tmux_sys::{EV_PERSIST, EV_SIGNAL};
-
     unsafe {
-        event_set(ev, x, (EV_SIGNAL | EV_PERSIST).try_into().unwrap(), cb, arg);
+        event_set(
+            ev,
+            x,
+            (EventFlags::SIGNAL | EventFlags::PERSIST).bits(),
+            cb,
+            arg,
+        );
     }
 }

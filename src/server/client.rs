@@ -21,7 +21,7 @@ use crate::{
         tree::rb,
     },
     file::ClientFiles,
-    libevent::{evtimer_add, evtimer_set},
+    libevent::{EventFlags, evtimer_add, evtimer_set},
     protocol::Msg,
     tmux_sys::{
         _PATH_BSHELL, CMD_READONLY, EV_TIMEOUT, KEYC_DOUBLECLICK, WINDOW_SIZE_LATEST, cfg_finished,
@@ -794,7 +794,7 @@ fn check_pane_resize(wp: &mut Pane) {
 
 /// Check pane buffer size.
 fn check_pane_buffer(wp: &mut Pane) {
-    use crate::tmux_sys::{EV_READ, control_pane_offset};
+    use crate::tmux_sys::control_pane_offset;
 
     // Work out the minimum used size. This is the most that can be removed
     // from the buffer.
@@ -894,9 +894,9 @@ fn check_pane_buffer(wp: &mut Pane) {
         );
         unsafe {
             if off {
-                crate::tmux_sys::bufferevent_disable(wp.event, EV_READ as c_short);
+                crate::tmux_sys::bufferevent_disable(wp.event, EventFlags::READ.bits());
             } else {
-                crate::tmux_sys::bufferevent_enable(wp.event, EV_READ as c_short);
+                crate::tmux_sys::bufferevent_enable(wp.event, EventFlags::READ.bits());
             }
         }
     }

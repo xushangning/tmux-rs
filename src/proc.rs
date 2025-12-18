@@ -29,10 +29,11 @@ use crate::{
         imsg::{Buf as IMsgBuf, IMsg},
         queue::tailq,
     },
+    libevent::EventFlags,
     protocol::Msg,
     tmux_sys::{
-        EV_READ, EV_WRITE, event_add, event_del, event_get_method, event_get_version, event_set,
-        imsg_get, imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, xstrdup,
+        event_add, event_del, event_get_method, event_get_version, event_set, imsg_get,
+        imsgbuf_queuelen, imsgbuf_read, imsgbuf_write, xstrdup,
     },
 };
 
@@ -222,7 +223,7 @@ impl Peer {
             event_set(
                 &mut (*ptr).event,
                 raw_fd,
-                EV_READ.try_into().unwrap(),
+                EventFlags::READ.bits(),
                 Some(event_cb),
                 ptr.cast(),
             );
@@ -238,14 +239,14 @@ impl Peer {
         unsafe {
             event_del(&mut self.event);
 
-            let mut events = EV_READ as c_short;
+            let mut events = EventFlags::READ;
             if imsgbuf_queuelen(&mut self.ibuf) > 0 {
-                events |= EV_WRITE as c_short;
+                events |= EventFlags::WRITE;
             }
             event_set(
                 &mut self.event,
                 self.ibuf.fd.as_raw_fd(),
-                events,
+                events.bits(),
                 Some(event_cb),
                 self as *mut _ as *mut c_void,
             );
@@ -294,9 +295,10 @@ impl Drop for Peer {
 
 extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
     let peer = unsafe { arg.cast::<Peer>().as_mut().unwrap() };
+    let events = EventFlags::from_bits_retain(events);
 
     unsafe {
-        if !peer.flags.intersects(PeerFlags::BAD) && (events & EV_READ as i16) != 0 {
+        if !peer.flags.intersects(PeerFlags::BAD) && events.intersects(EventFlags::READ) {
             if imsgbuf_read(&mut peer.ibuf) != 1 {
                 peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
                 return;
@@ -324,7 +326,7 @@ extern "C" fn event_cb(_fd: c_int, events: c_short, arg: *mut c_void) {
             }
         }
 
-        if events & EV_WRITE as i16 != 0 {
+        if events.intersects(EventFlags::WRITE) {
             if imsgbuf_write(&mut peer.ibuf) == -1 {
                 peer.dispatchcb.unwrap()(ptr::null_mut(), peer.arg);
                 return;
