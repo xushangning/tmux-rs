@@ -63,6 +63,50 @@ impl PartialEq for client_window {
 impl Eq for client_window {}
 
 impl Client {
+    fn init(out: NonNull<Self>, sock: UnixStream) {
+        let out = out.as_ptr();
+        unsafe {
+            (&raw mut (*out).references).write(1);
+            (&raw mut (*out).peer).write(
+                crate::tmux_sys::server_proc
+                    .as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .add_peer(sock.into(), Some(dispatch), out.cast())
+                    .as_ptr(),
+            );
+
+            Errno::result(gettimeofday(&raw mut (*out).creation_time, ptr::null_mut()))
+                .expect("gettimeofday failed");
+            (&raw mut (*out).activity_time).write((*out).creation_time.clone());
+
+            (&raw mut (*out).environ).write(crate::tmux_sys::environ_create());
+
+            (&raw mut (*out).fd).write(-1);
+            (&raw mut (*out).out_fd).write(-1);
+
+            (&raw mut (*out).queue).write(crate::tmux_sys::cmdq_new());
+            (&raw mut (*out).windows).write(rb::Head::new());
+            (&raw mut (*out).files).write(mem::transmute(rb::Head::<
+                client_file,
+                { mem::offset_of!(client_file, entry) },
+            >::new()));
+
+            (*out).tty.sx = 80;
+            (*out).tty.sy = 24;
+            (&raw mut (*out).theme).write(crate::tmux_sys::client_theme_THEME_UNKNOWN);
+
+            status_init(out);
+            (&raw mut (*out).flags).write(ClientFlags::FOCUSED);
+
+            (&raw mut (*out).keytable).write(key_bindings_get_table(c"root".as_ptr(), 1));
+            (*(*out).keytable).references += 1;
+
+            evtimer_set(&raw mut (*out).repeat_timer, Some(repeat_timer), out.cast());
+            evtimer_set(&raw mut (*out).click_timer, Some(click_timer), out.cast());
+        }
+    }
+
     /// Set client key table.
     pub(crate) fn set_key_table(&mut self, mut name: *const c_char) {
         if name.is_null() {
@@ -436,52 +480,17 @@ pub(super) fn create(sock: UnixStream) -> NonNull<Client> {
     sock.set_nonblocking(true).unwrap();
 
     let mut c = unsafe {
-        MBox::from_raw(crate::tmux_sys::xcalloc(1, mem::size_of::<Client>()).cast::<Client>())
+        MBox::from_raw(
+            crate::tmux_sys::xcalloc(1, mem::size_of::<MaybeUninit<Client>>())
+                .cast::<MaybeUninit<Client>>(),
+        )
     };
-    let c_ptr = &raw mut *c.as_mut();
-    c.references = 1;
-    c.peer = unsafe { crate::tmux_sys::server_proc.as_mut().unwrap().as_mut() }
-        .add_peer(sock.into(), Some(dispatch), c_ptr.cast())
-        .as_ptr();
-
-    Errno::result(unsafe { gettimeofday(&mut c.creation_time, ptr::null_mut()) })
-        .expect("gettimeofday failed");
-    c.activity_time = c.creation_time.clone();
-
-    c.environ = unsafe { crate::tmux_sys::environ_create() };
-
-    c.fd = -1;
-    c.out_fd = -1;
-
-    c.queue = unsafe { crate::tmux_sys::cmdq_new() };
-    c.windows = rb::Head::new();
-    c.files = unsafe {
-        mem::transmute(rb::Head::<
-            client_file,
-            { mem::offset_of!(client_file, entry) },
-        >::new())
-    };
-
-    c.tty.sx = 80;
-    c.tty.sy = 24;
-    c.theme = crate::tmux_sys::client_theme_THEME_UNKNOWN;
-
-    unsafe {
-        status_init(c.as_mut());
-    }
-    c.flags |= ClientFlags::FOCUSED;
-
-    unsafe {
-        c.keytable = key_bindings_get_table(c"root".as_ptr(), 1);
-        (*c.keytable).references += 1;
-
-        evtimer_set(&mut c.repeat_timer, Some(repeat_timer), c_ptr.cast());
-        evtimer_set(&mut c.click_timer, Some(click_timer), c_ptr.cast());
-    }
+    let c_ptr = c.as_mut_ptr();
+    Client::init(unsafe { NonNull::new_unchecked(c_ptr) }, sock);
 
     unsafe {
         Pin::new_unchecked(crate::tmux_sys::clients.assume_init_mut())
-            .push_back(MBox::into_non_null_raw(c));
+            .push_back(MBox::into_non_null_raw(c.assume_init()));
     }
     debug!("new client {:?}", c_ptr);
     unsafe { NonNull::new_unchecked(c_ptr) }
