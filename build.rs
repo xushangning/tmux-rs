@@ -1,6 +1,8 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+use bindgen::MacroTypeVariation;
+
 fn main() {
     // Get the directory of the Cargo.toml (project root)
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -13,6 +15,7 @@ fn main() {
     println!("cargo:rustc-link-lib=tmux");
     let bindings = bindgen::Builder::default()
         .header("tmux.h")
+        .default_macro_constant_type(MacroTypeVariation::Signed)
         .blocklist_type("timeval")
         .raw_line("use libc::timeval;")
         .blocklist_type("clients")

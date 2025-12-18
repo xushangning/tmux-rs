@@ -232,7 +232,7 @@ pub fn main(base: *mut event_base, args: &Vec<String>, mut flags: ClientFlags, f
             match pr.status {
                 #[allow(non_upper_case_globals)]
                 cmd_parse_status_CMD_PARSE_SUCCESS => {
-                    if cmd_list_any_have(pr.cmdlist, CMD_STARTSERVER.try_into().unwrap()) != 0 {
+                    if cmd_list_any_have(pr.cmdlist, CMD_STARTSERVER) != 0 {
                         flags |= ClientFlags::START_SERVER;
                     }
                     cmd_list_free(pr.cmdlist);

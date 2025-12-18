@@ -416,7 +416,7 @@ pub(crate) fn loop_(tp: *const Proc, loopcb: Option<unsafe extern "C" fn() -> c_
     debug!("{name} loop enter");
     loop {
         unsafe {
-            event_loop(EVLOOP_ONCE.try_into().unwrap());
+            event_loop(EVLOOP_ONCE);
             if (*tp).exit != 0 {
                 break;
             }

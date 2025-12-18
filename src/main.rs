@@ -323,8 +323,8 @@ fn main() {
                 break;
             }
 
-            let scope: u32 = oe.scope.try_into().unwrap();
-            if oe.scope as u32 & OPTIONS_TABLE_SERVER != 0 {
+            let scope = oe.scope;
+            if scope & OPTIONS_TABLE_SERVER != 0 {
                 options_default(global_options, oe_ptr);
             } else if scope & OPTIONS_TABLE_SESSION != 0 {
                 options_default(global_s_options, oe_ptr);

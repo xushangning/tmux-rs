@@ -1511,7 +1511,7 @@ fn dispatch_command(c: &mut Client, imsg: &IMsg) {
     };
 
     let new_item = if c.flags.intersects(ClientFlags::READ_ONLY)
-        && unsafe { cmd_list_all_have(cmdlist, CMD_READONLY.try_into().unwrap()) } == 0
+        && unsafe { cmd_list_all_have(cmdlist, CMD_READONLY) } == 0
     {
         unsafe {
             cmdq_get_callback1(
