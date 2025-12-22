@@ -13,6 +13,8 @@ fn main() {
 
     println!("cargo:rustc-link-lib=event_core");
     println!("cargo:rustc-link-lib=tmux");
+    println!("cargo:rustc-link-lib=tinfo");
+    println!("cargo:rustc-link-lib=resolv");
     let bindings = bindgen::Builder::default()
         .header("tmux.h")
         .default_macro_constant_type(MacroTypeVariation::Signed)
@@ -63,6 +65,8 @@ fn main() {
         .raw_line("unsafe extern \"C\" { pub(crate) static mut server_proc: Option<core::pin::Pin<mbox::MBox<tmuxproc>>>; }")
         // Fix error ./compat.h:384:7: error: conflicting types for 'clock_gettime'
         .clang_arg("-D HAVE_CLOCK_GETTIME")
+        // Fix Linux duplicate definition error
+        .blocklist_item("IPPORT_RESERVED")
         .use_core()
         .generate_cstr(true)
         .wrap_unsafe_ops(true)

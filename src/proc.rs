@@ -229,7 +229,11 @@ impl Peer {
             );
 
             let mut gid = MaybeUninit::uninit();
-            if libc::getpeereid(raw_fd, &mut (*ptr).uid, gid.as_mut_ptr()) != 0 {
+            #[cfg(target_os = "linux")]
+            let result = crate::tmux_sys::getpeereid(raw_fd, &mut (*ptr).uid, gid.as_mut_ptr());
+            #[cfg(not(target_os = "linux"))]
+            let result = libc::getpeereid(raw_fd, &mut (*ptr).uid, gid.as_mut_ptr());
+            if result != 0 {
                 (&raw mut (*ptr).uid).write(u32::MAX);
             }
         }

@@ -346,6 +346,7 @@ getversion(void)
 	return (TMUX_VERSION);
 }
 
+#ifndef TMUX_NO_MAIN
 int
 main(int argc, char **argv)
 {
@@ -538,3 +539,4 @@ main(int argc, char **argv)
 	/* Pass control to the client. */
 	exit(client_main(osdep_event_init(), argc, argv, flags, feat));
 }
+#endif /* TMUX_NO_MAIN */

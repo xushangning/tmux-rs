@@ -1,10 +1,9 @@
-use std::env;
-
 use crate::tmux_sys::event_base;
 
 // TODO: support other OSes
 #[cfg(target_os = "macos")]
 pub fn event_init() -> *mut event_base {
+    use std::env;
     unsafe {
         // On OS X, kqueue and poll are both completely broken and don't
         // work on anything except socket file descriptors (yes, really).
@@ -16,4 +15,9 @@ pub fn event_init() -> *mut event_base {
         env::remove_var("EVENT_NOPOLL");
         base
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn event_init() -> *mut event_base {
+    unsafe { crate::tmux_sys::event_init() }
 }

@@ -14,7 +14,8 @@ AM_CPPFLAGS += @XOPEN_DEFINES@ \
 	-DTMUX_VERSION='"@VERSION@"' \
 	-DTMUX_CONF='"$(sysconfdir)/tmux.conf:~/.tmux.conf:$$XDG_CONFIG_HOME/tmux/tmux.conf:~/.config/tmux/tmux.conf"' \
 	-DTMUX_LOCK_CMD='"@DEFAULT_LOCK_CMD@"' \
-	-DTMUX_TERM='"@DEFAULT_TERM@"'
+	-DTMUX_TERM='"@DEFAULT_TERM@"' \
+	-DTMUX_NO_MAIN
 
 EXTRA_libtmux_la_DEPENDENCIES = rust
 
