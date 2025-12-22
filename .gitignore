@@ -26,6 +26,9 @@ fuzz/*-fuzzer
 tags
 tmux
 tmux.1.*
+*.deb
+*.la
+libtool
 
 
 # Added by cargo
